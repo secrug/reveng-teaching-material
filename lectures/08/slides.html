@@ -1,0 +1,392 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Lecture 8 — Formats, linking and loading</title>
+
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/5.1.0/reveal.min.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/5.1.0/theme/black.min.css" id="theme">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/5.1.0/plugin/highlight/monokai.min.css">
+
+<style>
+  :root { --accent:#ffc857; --dim:#8b949e; --good:#7ee787; --bad:#ff7b72; }
+  .reveal { font-size: 30px; }
+  .reveal h1 { font-size:1.9em; text-transform:none; letter-spacing:-0.01em; }
+  .reveal h2 { font-size:1.35em; text-transform:none; letter-spacing:-0.01em; }
+  .reveal h3 { font-size:1.05em; text-transform:none; color:var(--accent); }
+  .reveal section { text-align:left; }
+  .reveal section.center { text-align:center; }
+  .reveal pre { width:100%; box-shadow:none; font-size:0.62em; }
+  .reveal pre code { padding:1em; border-radius:6px; max-height:620px; }
+  .reveal code:not(pre code){ background:#1c2128; color:var(--accent); padding:1px 7px; border-radius:4px; font-size:0.92em; }
+  .reveal table { font-size:0.72em; }
+  .reveal table th { color:var(--accent); border-bottom:2px solid #30363d; }
+  .reveal table td, .reveal table th { padding:0.35em 0.7em; }
+  .reveal em { color:var(--accent); font-style:italic; }
+  .reveal strong { color:#fff; }
+  .lead { font-size:1.15em; line-height:1.45; }
+  .dim { color:var(--dim); }
+  .good { color:var(--good); }
+  .bad { color:var(--bad); }
+  .big { font-size:1.5em; line-height:1.35; }
+  .kicker { color:var(--accent); font-size:0.6em; letter-spacing:0.16em; text-transform:uppercase; margin-bottom:0.6em; }
+  .rule { border-left:4px solid var(--accent); padding-left:0.9em; }
+  .terminal { background:#0d1117; border:1px solid #30363d; border-radius:6px; padding:0.8em 1em;
+              font-family:monospace; font-size:0.66em; line-height:1.55; white-space:pre; overflow-x:auto; }
+  .two { display:grid; grid-template-columns:1fr 1fr; gap:1.2em; align-items:start; }
+  .reveal ul { margin-left:0.4em; }
+  .reveal li { margin-bottom:0.4em; }
+  .footnote { font-size:0.6em; color:var(--dim); margin-top:1.2em; }
+  .reveal .slide-number { font-size:0.5em; }
+  .card { background:#161b22; border:1px solid #30363d; border-radius:8px; padding:0.8em 1em; font-size:0.82em; }
+</style>
+</head>
+<body>
+<div class="reveal"><div class="slides">
+
+<section class="center">
+  <p class="kicker">Reverse Engineering &middot; Lecture 8</p>
+  <h1>Formats, linking and loading</h1>
+  <p class="dim" style="margin-top:1.4em">An executable isn't a monolith. It's a
+  structured document the loader assembles into a process &mdash; and you can intervene
+  without touching the code.</p>
+  <aside class="notes">
+    PLT/GOT is the confusing bit — go slow, step it live, show the GOT slot change in
+    x/gx. The inlined-strcmp wrong turn must land — verify the comparison is inlined in
+    your auractl build (BUILD-PLAN §S8). Don't oversell the ARM64/PE contrast: 10 min,
+    transfer only.
+  </aside>
+</section>
+
+<section>
+  <h2>Two files, same source</h2>
+  <div class="terminal">$ ls -l hello_dyn hello_static
+-rwxr-xr-x   16696   hello_dyn
+-rwxr-xr-x  871280   hello_static</div>
+  <p class="fragment" style="margin-top:1.2em">Same source. Same output.
+  <strong>Why is one 50&times; bigger?</strong></p>
+  <p class="fragment">And which one still runs in ten years on a machine with
+  different libraries?</p>
+  <aside class="notes">
+    Cold open. Written prediction. Resolved at the end — it's the whole static/dynamic
+    tradeoff.
+  </aside>
+</section>
+
+<section>
+  <h2>An executable is a structured document</h2>
+  <p>Not a stream of code. A file with a header, a table of contents, and distinct
+  regions &mdash; assembled into a process by the <strong>loader</strong>.</p>
+  <p class="fragment">On Linux the format is <strong>ELF</strong>. The same format
+  serves three roles:</p>
+  <ul class="fragment">
+    <li>executables you run</li>
+    <li>shared libraries you link against</li>
+    <li>relocatable object files the compiler emits</li>
+  </ul>
+  <p class="fragment"><code>readelf -h</code> tells you which.</p>
+</section>
+
+<section>
+  <h2>ELF is described twice</h2>
+  <pre><code class="language-text" data-trim>
+        ┌─────────────────────┐
+        │    ELF header       │  "x86-64, entry 0x1050, ..."
+        ├─────────────────────┤
+        │  program headers    │  ◀── THE LOADER reads these
+        │  (segments)         │      "map these bytes here, r-x;
+        │                     │       those there, rw-"
+        ├─────────────────────┤
+        │   code and data     │
+        ├─────────────────────┤
+        │  section headers    │  ◀── THE LINKER + your TOOLS
+        │  (.text .data ...)  │      "here is each named piece"
+        └─────────────────────┘
+  </code></pre>
+  <p class="fragment"><strong>Segments</strong> are for running. <strong>Sections</strong>
+  are for linking and tooling.</p>
+</section>
+
+<section class="center">
+  <h2>Segments are for <em>running</em>.<br>Sections are for <em>reading</em>.</h2>
+  <p class="lead fragment" style="margin-top:1.3em">The loader maps segments with
+  permissions and doesn't care about names. The running program never needs the
+  section table.</p>
+  <div class="rule fragment" style="margin-top:1.3em; text-align:left">
+    <p class="lead">So you can remove the section info and the program still runs.
+    <strong>Stripping is an attack on the analyst, not the machine.</strong></p>
+  </div>
+</section>
+
+<section>
+  <h2>The sections that matter</h2>
+  <div class="two">
+    <div>
+      <div class="terminal">readelf -h   header
+readelf -l   segments
+readelf -S   sections
+readelf -d   dynamic / NEEDED</div>
+    </div>
+    <div>
+      <table style="font-size:0.66em">
+        <tr><td><code>.text</code></td><td>code</td></tr>
+        <tr><td><code>.rodata</code></td><td>constants, strings</td></tr>
+        <tr><td><code>.data</code></td><td>init globals</td></tr>
+        <tr><td><code>.bss</code></td><td>zero globals (no file space)</td></tr>
+        <tr><td><code>.plt/.got</code></td><td>shared-call machinery</td></tr>
+        <tr><td><code>.symtab</code></td><td class="bad">names &mdash; stripped away</td></tr>
+        <tr><td><code>.dynsym</code></td><td class="good">dyn symbols &mdash; survive</td></tr>
+      </table>
+    </div>
+  </div>
+  <p class="fragment footnote">That last distinction is the one to hold onto.</p>
+</section>
+
+<section>
+  <h2>Relocation</h2>
+  <p>Your program calls <code>printf</code>. The compiler doesn't know where
+  <code>printf</code> is &mdash; it's in libc, loaded at an address not decided until
+  runtime.</p>
+  <p class="fragment">So it leaves a blank and attaches a note:
+  <em>"fill in <code>printf</code>'s address here once you know it."</em></p>
+  <div class="rule fragment" style="margin-top:1.2em">
+    <p>That note is a <strong>relocation</strong>. <code>readelf -r</code> lists them:
+    each names a symbol and the location to patch.</p>
+  </div>
+</section>
+
+<section>
+  <h2>Two ways to resolve them</h2>
+  <div class="two">
+    <div class="card">
+      <h3>Static</h3>
+      <p>Library copied <em>into</em> the executable at build time. Resolved before it
+      runs.</p>
+      <p><strong>800 KB.</strong> Self-contained. Runs unchanged in ten years.</p>
+    </div>
+    <div class="card">
+      <h3>Dynamic</h3>
+      <p>Library stays external. Records "I need libc" (<code>NEEDED</code>); the loader
+      maps it in and resolves references at load time.</p>
+      <p><strong>16 KB.</strong> Shared between processes. Needs a compatible libc
+      present.</p>
+    </div>
+  </div>
+  <p class="fragment lead" style="margin-top:1em">That 50&times; is entirely the
+  presence or absence of libc inside the file.</p>
+</section>
+
+<section>
+  <h2>PLT and GOT</h2>
+  <p>How does a <code>call</code> reach a function whose address isn't known until
+  runtime? One level of indirection.</p>
+  <pre><code class="language-text" data-trim>
+  call printf@plt
+        │
+        ▼
+  ┌── .plt ──┐         ┌──── .got.plt ────┐
+  │ printf:  │──jmp──▶ │ [printf's slot]  │──▶ 1st call: resolver runs,
+  │  jmp     │         │                  │             writes real addr here
+  │ [GOT slot]         │                  │──▶ later:    jump straight there
+  └──────────┘         └──────────────────┘
+  </code></pre>
+  <p class="fragment"><strong>Lazy binding</strong>: nothing resolved until first use.
+  A function never called is never resolved.</p>
+</section>
+
+<section>
+  <h2>Watch the slot change</h2>
+  <div class="terminal">(gdb) x/gx 0x404018          # printf's GOT slot, before first call
+0x404018:  0x0000000000401036       ← points back into the PLT
+
+(gdb) # ... step past the first printf ...
+
+(gdb) x/gx 0x404018          # after
+0x404018:  0x00007ffff7e12420       ← a libc address. It changed.</div>
+  <aside class="notes">
+    This live demo is what makes lazy binding concrete. Don't just describe it — show
+    the address change.
+  </aside>
+</section>
+
+<section>
+  <h2>Three reasons to care</h2>
+  <ul>
+    <li class="fragment">In a stripped binary, <strong>PLT entries are still named</strong>
+        &mdash; <code>strcmp</code>, <code>socket</code>, <code>connect</code>. Dynamic
+        symbols can't be stripped. A map into anonymous code</li>
+    <li class="fragment">The GOT is a table of <strong>function pointers you can watch
+        or overwrite</strong> &mdash; a debugging technique, and elsewhere an attack
+        surface</li>
+    <li class="fragment">It's the mechanism behind the interposition trick coming next</li>
+  </ul>
+</section>
+
+<section>
+  <h2>What stripping removes &mdash; and doesn't</h2>
+  <table>
+    <tr><th>Removed by <code>strip</code></th><th>Always survives</th></tr>
+    <tr><td>your function names (<code>.symtab</code>)</td><td>dynamic symbols &mdash; the library calls</td></tr>
+    <tr><td>local variable names</td><td>the PLT/GOT structure</td></tr>
+    <tr><td>debug information</td><td>strings, control flow, the code itself</td></tr>
+  </table>
+  <p class="fragment" style="margin-top:1em">Stripped is <strong>inconvenient, not
+  opaque</strong>. A nameless function calling <code>socket</code>,
+  <code>bind</code>, <code>listen</code>, <code>accept</code> is server setup &mdash;
+  name it yourself from its imports.</p>
+  <p class="fragment footnote">Exactly the Lecture 6 renaming workflow, now grounded in
+  why the imports are still there.</p>
+</section>
+
+<section>
+  <h2>Interposition: <code>LD_PRELOAD</code></h2>
+  <p>Tell the loader: load <em>my</em> library first, and if I define a function with
+  the same name as a library's, use mine.</p>
+  <pre class="fragment"><code class="language-c" data-trim>
+int strcmp(const char *a, const char *b) {
+    int (*real)(const char*,const char*) = dlsym(RTLD_NEXT, "strcmp");
+    // observe or alter, then fall through if you like
+    return real(a, b);
+}
+  </code></pre>
+  <div class="terminal fragment">gcc -shared -fPIC hook.c -o hook.so -ldl
+LD_PRELOAD=./hook.so ./target</div>
+  <p class="fragment footnote"><code>RTLD_NEXT</code> = "the next <code>strcmp</code>
+  after me" &mdash; how the hook calls the real one. The target binary is never
+  modified.</p>
+</section>
+
+<section>
+  <h2>Powerful &mdash; with a hard boundary</h2>
+  <p><code>LD_PRELOAD</code> only catches calls that actually go through the PLT to a
+  shared library. It <strong>cannot</strong> touch:</p>
+  <ul class="fragment">
+    <li><strong>inlined code</strong> &mdash; no call to intercept</li>
+    <li><strong>internal functions</strong> &mdash; one of the program's own functions
+        calling another doesn't cross the PLT</li>
+    <li><strong>static linking</strong> &mdash; no dynamic call to interpose on</li>
+    <li><strong>direct syscalls</strong> &mdash; bypass libc entirely</li>
+  </ul>
+  <p class="fragment lead" style="margin-top:1em">The boundary follows from lazy
+  binding: it works on exactly the calls lazy binding resolves, and nothing else.</p>
+</section>
+
+<section>
+  <p class="kicker">Ten minutes, transfer only</p>
+  <h2>The same ideas in other clothes</h2>
+  <div class="two">
+    <div class="card">
+      <h3>Windows PE</h3>
+      <p>Same structure, different names. The GOT's cousin is the <strong>Import
+      Address Table</strong>. <code>.dll</code> not <code>.so</code>.
+      <code>LoadLibrary</code> not the ELF loader.</p>
+      <p class="dim"><code>objdump -x</code> a PE and you'll recognise everything.</p>
+    </div>
+    <div class="card">
+      <h3>ARM64</h3>
+      <p>Fixed 4-byte instructions. Registers <code>x0</code>&ndash;<code>x30</code>;
+      args in <code>x0</code>&ndash;<code>x7</code>, return in <code>x0</code>.</p>
+      <p class="dim">Still a state machine, a stack, a calling convention. Lectures 2,
+      3, 4 are all true here.</p>
+    </div>
+  </div>
+  <p class="lead fragment good" style="margin-top:1em">If you thought you were learning
+  x86, you were learning how machines work. That transfers.</p>
+</section>
+
+<section class="center">
+  <p class="kicker">Lab &mdash; 40 + 30 minutes</p>
+  <h2>Read the structure, write a hook</h2>
+  <p class="lead" style="margin-top:1em"><strong>Core</strong> &mdash; full
+  <code>readelf</code> triage: type, linkage, interpreter, NEEDED libs, the PLT
+  function list. "This program can ___."</p>
+  <p class="dim"><strong>Stretch</strong> &mdash; name stripped functions from their PLT
+  calls and xrefs.<br>
+  <strong>Boss</strong> &mdash; follow a call through PLT&rarr;GOT in gdb, GOT slot
+  before and after. Explain lazy binding from what you saw.</p>
+  <p class="fragment lead"><strong>Lab B:</strong> write an <code>LD_PRELOAD</code>
+  hook on a call <code>auractl</code> <em>actually</em> uses (find it with
+  <code>ltrace</code> first). Note one thing it can't reach.</p>
+</section>
+
+<section>
+  <p class="kicker">Where the tool oversells</p>
+  <h2>The textbook answer to a specific question</h2>
+  <p>Ask a model how to bypass AURA-7's licence check with <code>LD_PRELOAD</code>:</p>
+  <div class="terminal fragment" style="margin-top:0.8em">"Preload a strcmp that returns 0 and the check passes."</div>
+  <p class="fragment" style="margin-top:1em">The canonical example. In every tutorial.
+  Exactly what you'd do &mdash; <em>if the binary called <code>strcmp</code></em>.</p>
+  <p class="big bad fragment">It doesn't.</p>
+</section>
+
+<section>
+  <h2>The comparison is inlined</h2>
+  <p>It's a <code>-O2</code> build; Lecture 6 already showed the licence logic inlined
+  into its caller. The hook would load, run, and change nothing.</p>
+  <div class="terminal fragment" style="margin-top:0.8em">$ objdump -d auractl | grep strcmp        # nothing
+$ readelf -r auractl | grep strcmp        # not in the PLT</div>
+  <p class="fragment" style="margin-top:1em">If the function you mean to hook doesn't
+  appear as a PLT-crossing call, <code>LD_PRELOAD</code> can't reach it.</p>
+  <p class="lead fragment">The generic answer omits the one fact that decides whether
+  it applies &mdash; because it was produced without looking at <em>this binary's</em>
+  PLT.</p>
+  <aside class="notes">
+    Falsification Drill. Falsifying observation from the room: "if it uses strcmp,
+    there's a call strcmp@plt and strcmp is in the PLT." Check both. Record: textbook
+    answer, not this binary.
+  </aside>
+</section>
+
+<section class="center">
+  <h2>The Lecture 4 pattern, again.</h2>
+  <p class="lead" style="margin-top:1.2em">A recognisable question triggered a
+  recognisable answer &mdash; and the recognition happened <strong>instead of</strong>
+  the checking.</p>
+  <p class="fragment">The check is thirty seconds of <code>objdump</code>.</p>
+</section>
+
+<section>
+  <h2>Summary</h2>
+  <ul style="font-size:0.76em">
+    <li>An executable is a structured document assembled by the loader</li>
+    <li>ELF described twice: <strong>segments</strong> for the loader,
+        <strong>sections</strong> for tools. The program needs only segments &mdash; so
+        stripping doesn't stop it running</li>
+    <li>A relocation is a note to fill in an address later. Static = build time (big,
+        self-contained); dynamic = load time (small, shared, dependent)</li>
+    <li>PLT/GOT enables <strong>lazy binding</strong>: library calls resolve on first
+        use. The GOT slot visibly changes</li>
+    <li>Stripping removes your names, never the dynamic symbols, PLT/GOT, strings, or
+        logic. Library calls map into stripped code</li>
+    <li><code>LD_PRELOAD</code> interposes on dynamic calls; can't reach inlined,
+        internal, static, or direct-syscall code</li>
+    <li>PE and ARM64 are the same concepts differently spelled</li>
+    <li>The tool's failure: "preload <code>strcmp</code>" for a binary that never calls
+        it. Check the PLT</li>
+  </ul>
+</section>
+
+<section class="center">
+  <p class="kicker">Next time</p>
+  <h2>Working like a reverse engineer:<br>methodology on a real target</h2>
+  <p class="dim" style="margin-top:1.4em">The skill isn't reading code. It's deciding
+  <em>which</em> code to read. Everything so far was equipment. Next week is the craft.</p>
+  <p class="footnote">Optional: CS:APP ch. 7. Exercise: build a program static and
+  dynamic, compare, then break the dynamic one by moving its library.</p>
+</section>
+
+</div></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/5.1.0/reveal.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/5.1.0/plugin/highlight/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/5.1.0/plugin/notes/notes.min.js"></script>
+<script>
+  Reveal.initialize({
+    hash:true, slideNumber:'c/t', transition:'fade', transitionSpeed:'fast',
+    width:1280, height:780, margin:0.07,
+    plugins:[ RevealHighlight, RevealNotes ]
+  });
+</script>
+</body>
+</html>

@@ -1,0 +1,470 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Lecture 3 — Control flow: decisions and loops</title>
+
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/5.1.0/reveal.min.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/5.1.0/theme/black.min.css" id="theme">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/5.1.0/plugin/highlight/monokai.min.css">
+
+<style>
+  :root { --accent:#ffc857; --dim:#8b949e; --good:#7ee787; --bad:#ff7b72; }
+  .reveal { font-size: 30px; }
+  .reveal h1 { font-size:1.9em; text-transform:none; letter-spacing:-0.01em; }
+  .reveal h2 { font-size:1.35em; text-transform:none; letter-spacing:-0.01em; }
+  .reveal h3 { font-size:1.05em; text-transform:none; color:var(--accent); }
+  .reveal section { text-align:left; }
+  .reveal section.center { text-align:center; }
+  .reveal pre { width:100%; box-shadow:none; font-size:0.62em; }
+  .reveal pre code { padding:1em; border-radius:6px; max-height:620px; }
+  .reveal code:not(pre code){ background:#1c2128; color:var(--accent); padding:1px 7px; border-radius:4px; font-size:0.92em; }
+  .reveal table { font-size:0.72em; }
+  .reveal table th { color:var(--accent); border-bottom:2px solid #30363d; }
+  .reveal table td, .reveal table th { padding:0.35em 0.7em; }
+  .reveal em { color:var(--accent); font-style:italic; }
+  .reveal strong { color:#fff; }
+  .lead { font-size:1.15em; line-height:1.45; }
+  .dim { color:var(--dim); }
+  .good { color:var(--good); }
+  .bad { color:var(--bad); }
+  .big { font-size:1.5em; line-height:1.35; }
+  .kicker { color:var(--accent); font-size:0.6em; letter-spacing:0.16em; text-transform:uppercase; margin-bottom:0.6em; }
+  .rule { border-left:4px solid var(--accent); padding-left:0.9em; }
+  .terminal { background:#0d1117; border:1px solid #30363d; border-radius:6px; padding:0.8em 1em;
+              font-family:monospace; font-size:0.66em; line-height:1.55; white-space:pre; overflow-x:auto; }
+  .two { display:grid; grid-template-columns:1fr 1fr; gap:1.2em; align-items:start; }
+  .reveal ul { margin-left:0.4em; }
+  .reveal li { margin-bottom:0.4em; }
+  .footnote { font-size:0.6em; color:var(--dim); margin-top:1.2em; }
+  .reveal .slide-number { font-size:0.5em; }
+</style>
+</head>
+<body>
+<div class="reveal"><div class="slides">
+
+<section class="center">
+  <p class="kicker">Reverse Engineering &middot; Lecture 3</p>
+  <h1>Control flow:<br>decisions and loops in machine code</h1>
+  <p class="dim" style="margin-top:1.4em">The compiler has a small, finite vocabulary.
+  Learn it and you read it backwards.</p>
+  <aside class="notes">
+    Longest warm-up of the course (15 min) — four weeks since the machine model, no
+    homework bridging it. Hand-trace 8 instructions hitting the L2 sticking points:
+    zero-extension, lea as arithmetic, xor zeroing, test. Verify in gdb on screen.
+  </aside>
+</section>
+
+<section>
+  <h2>The machine has no <code>if</code></h2>
+  <p>No <code>while</code>, no <code>for</code>, no <code>switch</code>. One
+  mechanism: <strong>conditionally write a new value into <code>rip</code></strong>.</p>
+  <p class="fragment">Every control structure you have written compiles to some
+  arrangement of compares and jumps.</p>
+  <p class="lead fragment" style="margin-top:1.2em">But the compiler doesn't invent a
+  new arrangement each time. It has a <em>vocabulary</em> &mdash; a handful of shapes
+  per construct.</p>
+  <p class="fragment">This lecture is that vocabulary.</p>
+</section>
+
+<section>
+  <h2>Conditional jumps</h2>
+  <table>
+    <tr><th>After <code>cmp a, b</code></th><th>Jump</th><th>Taken when</th></tr>
+    <tr><td></td><td><code>je</code> / <code>jz</code></td><td><code>a == b</code></td></tr>
+    <tr><td></td><td><code>jne</code> / <code>jnz</code></td><td><code>a != b</code></td></tr>
+    <tr><td><strong>signed</strong></td><td><code>jl jle jg jge</code></td>
+        <td><strong>l</strong>ess / <strong>g</strong>reater</td></tr>
+    <tr><td><strong>unsigned</strong></td><td><code>jb jbe ja jae</code></td>
+        <td><strong>b</strong>elow / <strong>a</strong>bove</td></tr>
+  </table>
+  <div class="rule fragment" style="margin-top:1.2em">
+    <p>Signed and unsigned comparisons use <strong>different instructions</strong>.
+    The compiler had to choose &mdash; and its choice records the signedness of a
+    variable whose type was destroyed.</p>
+  </div>
+  <p class="fragment footnote">Same leverage as <code>movzx</code>/<code>movsx</code>
+  in L2. Collect these as they accumulate.</p>
+</section>
+
+<section>
+  <p class="kicker">The most common misreading in the course</p>
+  <h2>The compiler branches on the <em>negation</em></h2>
+  <div class="two">
+    <pre><code class="language-c" data-trim>
+if (x &gt; 5) {
+    do_something();
+}
+    </code></pre>
+    <pre><code class="language-asm" data-trim>
+    cmp  DWORD PTR [rbp-4], 5
+    jle  .Lskip     ; x &lt;= 5 → skip
+    call do_something
+.Lskip:
+    </code></pre>
+  </div>
+  <p class="fragment">Source said <code>&gt;</code>. Assembly says <code>jle</code>,
+  which is <code>&le;</code>. <strong>Not a contradiction</strong> &mdash; the jump
+  means "get me out of here if the condition failed."</p>
+  <p class="lead fragment">Read a conditional jump as the <em>exit</em> condition,
+  never the source condition.</p>
+  <aside class="notes">
+    Say this three times today. Put it on the board and leave it there. Students
+    misread it for a month otherwise, and every downstream conclusion inverts.
+  </aside>
+</section>
+
+<section>
+  <h2>Basic blocks</h2>
+  <p>A maximal straight-line run with <strong>one entry, one exit</strong>. Blocks end
+  at any jump and begin at any jump target.</p>
+  <pre><code class="language-text" data-trim>
+        ┌──────────┐
+        │   B0     │  cmp / jle ──┐
+        └────┬─────┘              │
+             │ fall through       │
+        ┌────▼─────┐              │
+        │   B1     │              │
+        └────┬─────┘              │
+             └────────────▶┌──────▼───┐
+                           │   B2     │
+                           └──────────┘
+  </code></pre>
+  <p class="fragment">That is an <code>if</code> without an <code>else</code> &mdash;
+  identified <em>without reading a single instruction inside <code>B1</code></em>.</p>
+</section>
+
+<section class="center">
+  <h2 class="good">Stop reading instructions.<br>Start reading blocks.</h2>
+  <p class="lead fragment" style="margin-top:1.3em">The instructions inside a block
+  are rarely the interesting part. <strong>The shape of the graph is.</strong></p>
+  <p class="fragment dim">Largest single speed-up available to you. Costs nothing but
+  the habit.</p>
+  <p class="fragment footnote">Lecture 2's line-by-line annotation was the last time
+  you should read that way.</p>
+</section>
+
+<section>
+  <h2>Shape 1&ndash;2: <code>if</code>, <code>if</code>/<code>else</code></h2>
+  <div class="two">
+    <div>
+      <p class="dim" style="font-size:0.8em">if, no else</p>
+      <pre><code class="language-asm" data-trim>
+    cmp  eax, 5
+    jle  .Lend
+    &lt;body&gt;
+.Lend:
+      </code></pre>
+    </div>
+    <div>
+      <p class="dim" style="font-size:0.8em">if / else</p>
+      <pre><code class="language-asm" data-trim>
+    cmp  eax, 5
+    jle  .Lelse
+    &lt;if body&gt;
+    jmp  .Lend
+.Lelse:
+    &lt;else body&gt;
+.Lend:
+      </code></pre>
+    </div>
+  </div>
+  <p class="fragment">The <strong>unconditional <code>jmp</code></strong> at the end of
+  the first body is the tell. Without it, there is no <code>else</code>.</p>
+</section>
+
+<section>
+  <h2>Shape 3&ndash;4: <code>while</code>, <code>for</code></h2>
+  <pre><code class="language-asm" data-trim data-line-numbers="1|2-3|4-6">
+    jmp  .Ltest        ; enter by jumping to the test
+.Lbody:
+    &lt;body&gt;
+.Ltest:
+    cmp  eax, ebx
+    jl   .Lbody
+  </code></pre>
+  <p class="fragment">The test sits at the <strong>bottom</strong>. Looks inside out
+  &mdash; and there's a reason: one conditional jump per iteration instead of a
+  conditional plus an unconditional. Cost is one extra jump on entry.</p>
+  <p class="fragment"><code>for</code> is this shape with an initialiser before it and
+  the increment at the end of the body. <strong>There is no <code>for</code> in
+  machine code</strong> &mdash; it's a <code>while</code> with bookkeeping.</p>
+</section>
+
+<section>
+  <h2>Shape 5: <code>do</code>/<code>while</code></h2>
+  <pre><code class="language-asm" data-trim>
+.Lbody:
+    &lt;body&gt;
+    cmp  eax, ebx
+    jl   .Lbody
+  </code></pre>
+  <div class="rule fragment" style="margin-top:1.2em">
+    <p class="lead">There is <strong>no jump at the top</strong>.<br>
+    That absence is the entire signature.</p>
+  </div>
+  <p class="fragment">A <code>while</code> enters by jumping to its test. A
+  <code>do</code>/<code>while</code> falls straight into its body &mdash; because it
+  must run at least once.</p>
+</section>
+
+<section>
+  <h2>Shape 6: the decision with no branch</h2>
+  <div class="two">
+    <pre><code class="language-c" data-trim>
+int max(int a, int b) {
+    return a &gt; b ? a : b;
+}
+    </code></pre>
+    <pre><code class="language-asm" data-trim>
+    cmp   edi, esi
+    mov   eax, esi
+    cmovg eax, edi
+    ret
+    </code></pre>
+  </div>
+  <p class="fragment"><code>cmovg</code> writes the source only if the condition holds
+  &mdash; <strong>without branching</strong>. A mispredicted branch costs far more
+  than an always-executed move.</p>
+</section>
+
+<section class="center">
+  <h2 class="bad">A decision in the program can have<br>no jump in the machine code.</h2>
+  <p class="lead fragment" style="margin-top:1.3em">If you locate control flow by
+  searching for jumps, <strong>you will miss it entirely</strong>.</p>
+  <p class="fragment dim">Also why constant-time crypto is written this way: no
+  branch means no timing difference that depends on the secret.</p>
+</section>
+
+<section>
+  <h2>Short-circuit <code>&amp;&amp;</code> and <code>||</code></h2>
+  <div class="two">
+    <pre><code class="language-c" data-trim>
+if (p != NULL
+    &amp;&amp; p-&gt;count &gt; 0) {
+    ...
+}
+    </code></pre>
+    <pre><code class="language-asm" data-trim>
+    test rdi, rdi
+    je   .Lskip
+    cmp  DWORD PTR [rdi+8], 0
+    jle  .Lskip
+    &lt;body&gt;
+.Lskip:
+    </code></pre>
+  </div>
+  <p class="fragment">Two separate tests, both jumping to the <strong>same
+  label</strong>. <code>||</code> is the mirror image &mdash; each test jumps
+  <em>into</em> the body on success.</p>
+  <p class="fragment">The second condition is only reachable through the first. When
+  you ask "can this dangerous code be reached?", the chain of short-circuit tests
+  <em>is</em> the set of conditions that must all hold.</p>
+</section>
+
+<section>
+  <h2><code>switch</code> has three compilations</h2>
+  <table>
+    <tr><th>Case values</th><th>Compiles to</th></tr>
+    <tr><td>Dense (0&ndash;20)</td><td><strong>Jump table</strong> &mdash; index into a table of targets</td></tr>
+    <tr class="fragment"><td>Sparse (1, 900, 40000)</td><td><strong>If-chain</strong> &mdash; sequential comparisons</td></tr>
+    <tr class="fragment"><td>Many, scattered</td><td><strong>Binary search</strong> &mdash; a tree of comparisons</td></tr>
+  </table>
+  <p class="fragment" style="margin-top:1em">"I found a jump table" tells you the case
+  values were dense.</p>
+  <p class="fragment">"I found an if-chain" tells you <strong>nothing</strong> about
+  whether the programmer wrote <code>switch</code> or <code>if</code>.</p>
+  <p class="fragment dim">Which construct was typed is among the things compilation
+  destroys.</p>
+</section>
+
+<section>
+  <h2>The jump table, line by line</h2>
+  <pre><code class="language-asm" data-trim data-line-numbers="1-2|4|5|6|7">
+    cmp  edi, 0x63
+    ja   .Ldefault              ; bounds check (unsigned!)
+    mov  eax, edi
+    lea  rdx, [rip+0x1e4c]      ; address of the table
+    movsx rax, DWORD PTR [rdx+rax*4]   ; entry = 4-byte SIGNED offset
+    add  rax, rdx               ; offset + table base = target
+    jmp  rax                    ; indirect jump
+  </code></pre>
+  <p class="fragment">The check is <strong>unsigned</strong> on purpose: a negative
+  index reinterpreted as unsigned becomes enormous and fails too. One comparison
+  handles both ends.</p>
+  <aside class="notes">
+    Live on auractl's dispatcher. Scripted wrong turn: compute the RIP-relative table
+    address from the CURRENT instruction, land in garbage, notice, go back and fix.
+    Narrate the recovery.
+  </aside>
+</section>
+
+<section>
+  <h2>Why the table holds offsets, not addresses</h2>
+  <p>32-bit signed offsets from the table's own base &mdash; half the size of 64-bit
+  addresses, and position-independent.</p>
+  <p class="fragment"><code>movsx</code> sign-extends because targets can lie
+  <em>before</em> the table.</p>
+  <div class="rule fragment" style="margin-top:1.2em">
+    <p>The bounds check is the <strong>entire safety</strong> of this construction. If
+    it's missing or wrong, the program indexes past the table and jumps to whatever it
+    finds.</p>
+  </div>
+  <p class="fragment">You can now recognise its absence. That's a serious class of
+  vulnerability.</p>
+</section>
+
+<section class="center">
+  <p class="kicker">Lab A &mdash; 40 minutes</p>
+  <h2>Reconstruction</h2>
+  <p class="lead" style="margin-top:1em">First 10 min: <strong>matching game</strong> in
+  pairs, paper only. Six asm listings, six C snippets.</p>
+  <p class="dim"><strong>Core</strong> &mdash; recover C from an if/else and a counted loop.<br>
+  <strong>Stretch</strong> &mdash; nested loop with a <code>break</code>.
+  <em>Draw the CFG first.</em><br>
+  <strong>Boss</strong> &mdash; a <code>do</code>/<code>while</code> with a
+  <code>cmov</code>, <code>-O2</code>. Why is there no <code>jmp</code> at the top?</p>
+  <aside class="notes">
+    Insist on CFG-first for Stretch. Students who skip it get lost — let that happen,
+    then point at the CFG. The do/while and the cmov are the two that trip everyone in
+    the matching game; that's intended.
+  </aside>
+</section>
+
+<section>
+  <h2>Loops under <code>-O2</code></h2>
+  <table>
+    <tr><th>Transformation</th><th>What you'll see</th></tr>
+    <tr><td><strong>Strength reduction</strong></td><td>The <code>*4</code> vanishes &mdash;
+        replaced by a pointer incremented by 4. Your element-size clue goes with it</td></tr>
+    <tr class="fragment"><td><strong>Induction var elimination</strong></td><td><code>i</code>
+        deleted entirely; the loop runs on a pointer compared against an end pointer.
+        <em>The counter you expect doesn't exist</em></td></tr>
+    <tr class="fragment"><td><strong>Unrolling</strong></td><td>Body duplicated. A loop that
+        looks like it does four per pass may do one, four times</td></tr>
+    <tr class="fragment"><td><strong>Rotation</strong></td><td>Test moves &mdash; changes which
+        shape from §5 it resembles</td></tr>
+  </table>
+  <p class="fragment" style="margin-top:0.8em"><strong>Behaviour is preserved.
+  Structure is not.</strong></p>
+</section>
+
+<section>
+  <p class="kicker">Where the tools are most useful &mdash; and most quietly wrong</p>
+  <h2>Reconstruction is their best trick</h2>
+  <p>Give a decompiler or a model a function's disassembly and you get readable C
+  with the loops and conditionals in roughly the right places, in a second. Usually
+  correct.</p>
+  <p class="lead fragment" style="margin-top:1.3em">The failure mode is narrow and
+  specific:</p>
+  <p class="big bad fragment">loop bounds.</p>
+</section>
+
+<section>
+  <h2>One character</h2>
+  <div class="two">
+    <div>
+      <p class="dim" style="font-size:0.8em">the binary</p>
+      <pre><code class="language-asm" data-trim>
+cmp  eax, edx
+jle  .Lbody     ; ≤  → runs n+1 times
+      </code></pre>
+    </div>
+    <div>
+      <p class="dim" style="font-size:0.8em">the reconstruction</p>
+      <pre><code class="language-c" data-trim>
+for (int i = 0; i &lt; n; i++)
+                  // runs n times
+      </code></pre>
+    </div>
+  </div>
+  <p class="fragment" style="margin-top:0.8em">The common idiom is <code>&lt;</code>.
+  A tool producing the <em>most likely</em> reconstruction emits <code>&lt;</code>.</p>
+  <p class="fragment">It compiles. It reads naturally. It is wrong by one iteration.</p>
+  <p class="lead fragment">Nothing about that output looks suspicious. It isn't
+  garbled or hedged. It's a perfectly ordinary loop.</p>
+</section>
+
+<section>
+  <h2>The check takes thirty seconds</h2>
+  <div class="terminal">(gdb) b *0x401156        # the loop body
+(gdb) run 5
+(gdb) info breakpoints
+        breakpoint already hit 6 times</div>
+  <p class="fragment" style="margin-top:1em"><code>n</code> = 5, body ran
+  <strong>6</strong> times &rarr; the bound is <code>&le;</code>.</p>
+  <p class="fragment">Requires nothing beyond the ability to find the body.</p>
+  <aside class="notes">
+    Falsification Drill: state the claim, ask the room for the falsifying observation
+    (count iterations), make it, record verdict + reason. The reason: the model
+    produced the statistically common loop, not the one in front of it.
+  </aside>
+</section>
+
+<section class="center">
+  <h2>Off-by-one in a loop bound</h2>
+  <p class="lead" style="margin-top:1.2em">Historically among the most productive
+  sources of security vulnerabilities in real software.</p>
+  <p class="lead fragment">The difference between <code>&lt;</code> and
+  <code>&le;</code> is the difference between writing <em>inside</em> a buffer and
+  writing <strong>one element past it</strong>.</p>
+  <p class="fragment dim">Getting that boundary exactly right is not pedantry.</p>
+</section>
+
+<section class="center">
+  <p class="kicker">Lab B &mdash; 30 minutes</p>
+  <h2>Enumerate AURA-7's commands</h2>
+  <p class="lead" style="margin-top:1.2em">Read the dispatcher. Produce the full
+  table: index &rarr; handler address &rarr; guessed purpose.</p>
+  <div class="rule" style="margin-top:1.2em">
+    <p>Required: a <strong>confidence column</strong>.
+    <code>certain</code> / <code>likely</code> / <code>guess</code>.</p>
+  </div>
+  <p class="fragment dim">Separating what you <em>know</em> from what you
+  <em>suspect</em> is the professional core of the discipline &mdash; and the thing no
+  tool does unprompted.</p>
+</section>
+
+<section>
+  <h2>Summary</h2>
+  <ul style="font-size:0.8em">
+    <li>One mechanism: conditionally write to <code>rip</code></li>
+    <li>Signed vs unsigned jumps recover a type the compiler erased</li>
+    <li><strong>The compiler branches on the negation</strong> &mdash; read the exit condition</li>
+    <li>Read basic blocks, not instructions. The graph shape is the information</li>
+    <li>Six shapes cover almost everything. <code>do</code>/<code>while</code> is
+        identified by the <em>absence</em> of a top jump</li>
+    <li><code>cmov</code>: a decision can exist with no jump at all</li>
+    <li>A jump table's bounds check is its entire safety; entries are signed offsets,
+        not addresses</li>
+    <li>At <code>-O2</code>, loops are rotated, unrolled, stripped of counters</li>
+    <li>Tools are reliable on <strong>shape</strong>, unreliable on
+        <strong>bounds</strong>. Count the iterations</li>
+  </ul>
+</section>
+
+<section class="center">
+  <p class="kicker">Next time</p>
+  <h2>The stack, calling conventions,<br>and functions</h2>
+  <p class="dim" style="margin-top:1.4em">A function call is a convention, not a
+  language feature. Every function announces its own signature in how it touches
+  registers.</p>
+  <p class="footnote">Optional: CS:APP §3.6. Exercise: write a 10-case switch, compile
+  it, then spread the case values out and watch the table become an if-chain.</p>
+</section>
+
+</div></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/5.1.0/reveal.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/5.1.0/plugin/highlight/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/5.1.0/plugin/notes/notes.min.js"></script>
+<script>
+  Reveal.initialize({
+    hash:true, slideNumber:'c/t', transition:'fade', transitionSpeed:'fast',
+    width:1280, height:780, margin:0.07,
+    plugins:[ RevealHighlight, RevealNotes ]
+  });
+</script>
+</body>
+</html>

@@ -1,0 +1,420 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Lecture 7 — Dynamic analysis: running it and watching it</title>
+
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/5.1.0/reveal.min.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/5.1.0/theme/black.min.css" id="theme">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/5.1.0/plugin/highlight/monokai.min.css">
+
+<style>
+  :root { --accent:#ffc857; --dim:#8b949e; --good:#7ee787; --bad:#ff7b72; }
+  .reveal { font-size: 30px; }
+  .reveal h1 { font-size:1.9em; text-transform:none; letter-spacing:-0.01em; }
+  .reveal h2 { font-size:1.35em; text-transform:none; letter-spacing:-0.01em; }
+  .reveal h3 { font-size:1.05em; text-transform:none; color:var(--accent); }
+  .reveal section { text-align:left; }
+  .reveal section.center { text-align:center; }
+  .reveal pre { width:100%; box-shadow:none; font-size:0.62em; }
+  .reveal pre code { padding:1em; border-radius:6px; max-height:620px; }
+  .reveal code:not(pre code){ background:#1c2128; color:var(--accent); padding:1px 7px; border-radius:4px; font-size:0.92em; }
+  .reveal table { font-size:0.72em; }
+  .reveal table th { color:var(--accent); border-bottom:2px solid #30363d; }
+  .reveal table td, .reveal table th { padding:0.35em 0.7em; }
+  .reveal em { color:var(--accent); font-style:italic; }
+  .reveal strong { color:#fff; }
+  .lead { font-size:1.15em; line-height:1.45; }
+  .dim { color:var(--dim); }
+  .good { color:var(--good); }
+  .bad { color:var(--bad); }
+  .big { font-size:1.5em; line-height:1.35; }
+  .kicker { color:var(--accent); font-size:0.6em; letter-spacing:0.16em; text-transform:uppercase; margin-bottom:0.6em; }
+  .rule { border-left:4px solid var(--accent); padding-left:0.9em; }
+  .terminal { background:#0d1117; border:1px solid #30363d; border-radius:6px; padding:0.8em 1em;
+              font-family:monospace; font-size:0.66em; line-height:1.55; white-space:pre; overflow-x:auto; }
+  .two { display:grid; grid-template-columns:1fr 1fr; gap:1.2em; align-items:start; }
+  .reveal ul { margin-left:0.4em; }
+  .reveal li { margin-bottom:0.4em; }
+  .footnote { font-size:0.6em; color:var(--dim); margin-top:1.2em; }
+  .reveal .slide-number { font-size:0.5em; }
+  .card { background:#161b22; border:1px solid #30363d; border-radius:8px; padding:0.8em 1em; font-size:0.82em; }
+</style>
+</head>
+<body>
+<div class="reveal"><div class="slides">
+
+<section class="center">
+  <p class="kicker">Reverse Engineering &middot; Lecture 7</p>
+  <h1>Dynamic analysis:<br>running it and watching it</h1>
+  <p class="dim" style="margin-top:1.4em">A breakpoint is a hypothesis test.<br>
+  A patch is an experiment. Neither is a victory.</p>
+  <aside class="notes">
+    Second painful session for ARM Macs — single-stepping under emulation. Tier-1
+    shared box mandatory. Verify ltrace actually runs in the image beforehand; it's
+    often missing or flaky in containers.
+  </aside>
+</section>
+
+<section>
+  <h2>Two kinds of question</h2>
+  <div class="two">
+    <div class="card">
+      <h3>Static</h3>
+      <p>Reading without running.</p>
+      <p><em>What can this program do?</em></p>
+      <p>All paths. Imprecise values.</p>
+    </div>
+    <div class="card">
+      <h3>Dynamic</h3>
+      <p>Running and observing.</p>
+      <p><em>What does it do, with this input, right now?</em></p>
+      <p>One path. Exact values.</p>
+    </div>
+  </div>
+  <p class="fragment" style="margin-top:1.2em">Neither replaces the other. Real work
+  alternates: <strong>read until you have a hypothesis, run to test it, return to
+  reading with what you learned.</strong></p>
+</section>
+
+<section>
+  <h2>What a running program is</h2>
+  <pre><code class="language-text" data-trim>
+0x7fff...  ┌──────────────┐  high
+           │    stack     │  grows down   (Lecture 4)
+           │      ↓       │
+           │   [libc]     │  mapped shared library
+           │      ↑       │
+           │    heap      │  grows up     (Lecture 5)
+           ├──────────────┤
+           │ .bss  .data  │  globals
+           │ .rodata      │  constants
+           │ .text        │  your code
+0x400000   └──────────────┘  low
+  </code></pre>
+  <p class="fragment">Every process believes it has the machine to itself. Addresses
+  in one process mean nothing in another.</p>
+</section>
+
+<section>
+  <h2>See the real thing</h2>
+  <div class="terminal">(gdb) info proc mappings
+
+      Start Addr    End Addr      Perms  objfile
+  0x555555554000  0x555555555000   r--p  /home/s/auractl
+  0x555555555000  0x555555556000   r-xp  /home/s/auractl     ← code
+  0x7ffff7d95000  0x7ffff7f1d000   r-xp  /lib/libc.so.6
+  0x7ffffffde000  0x7ffffffff000   rw-p  [stack]</div>
+  <p class="fragment" style="margin-top:1em">Ground truth about what is loaded and
+  where. <strong>The first thing to check when an address makes no sense.</strong></p>
+</section>
+
+<section>
+  <h2>Syscalls: the boundary</h2>
+  <p>Your code runs in <strong>user mode</strong>. It cannot touch the disk, the
+  network, or the screen. Only the kernel can.</p>
+  <pre class="fragment"><code class="language-asm" data-trim>
+    mov  eax, 1          ; syscall 1 = write
+    mov  edi, 1          ; fd 1 = stdout
+    mov  rsi, msg        ; buffer
+    mov  edx, 13         ; length
+    syscall              ; trap into the kernel
+  </code></pre>
+  <p class="fragment"><code>printf</code> is not magic. It formats a string in user
+  space and eventually calls <code>write</code>. libc is a library of convenient
+  wrappers around these traps.</p>
+</section>
+
+<section class="center">
+  <h2 class="good">The syscall boundary<br>cannot be avoided.</h2>
+  <p class="lead fragment" style="margin-top:1.3em">A program that reads a file must
+  issue <code>openat</code> and <code>read</code> &mdash; however obfuscated the rest
+  of it is.</p>
+  <p class="fragment">That makes syscalls an excellent observation point. And the
+  numbers are fixed by the kernel ABI, so they survive everything compilation does.</p>
+</section>
+
+<section>
+  <h2>ASLR</h2>
+  <p>Stack, heap and library addresses are <strong>randomised every run</strong>.
+  Address space layout randomisation exists to make Lecture 4's return-address attack
+  harder: you can't redirect control to something you can't locate.</p>
+  <p class="fragment lead" style="margin-top:1.2em">Practical consequence:
+  <strong>addresses differ between runs.</strong> Yours won't match your neighbour's.</p>
+  <p class="fragment">gdb disables it so debugging is reproducible &mdash; helpful, and
+  occasionally misleading.</p>
+  <div class="rule fragment" style="margin-top:1em">
+    <p>Record <em>offsets from a known base</em>, not absolute addresses. And note
+    whether an address was observed under gdb.</p>
+  </div>
+</section>
+
+<section>
+  <p class="kicker">The fact that turns a debugger into a mechanism</p>
+  <h2>How a breakpoint actually works</h2>
+  <p>gdb <strong>overwrites the byte at that address with <code>0xCC</code></strong>
+  &mdash; <code>int3</code>, a one-byte software interrupt.</p>
+  <p class="fragment">Execution reaches it, the CPU traps into the kernel, the kernel
+  stops the process and notifies gdb. gdb puts the <em>original</em> byte back so the
+  program looks untouched, and restores it when you continue.</p>
+</section>
+
+<section>
+  <h2>Look at it</h2>
+  <div class="terminal">(gdb) x/1bx $pc
+0x401136:  0x55
+
+(gdb) break *0x401136
+(gdb) # ... while the program is running:
+(gdb) x/1bx 0x401136
+0x401136:  0xcc            ← int3</div>
+  <aside class="notes">
+    This is the wow moment. Spend on it. Seeing 0xCC in their own program's bytes is
+    when the debugger stops being magic. Pays off directly in L9's anti-debug segment.
+  </aside>
+</section>
+
+<section>
+  <h2>Two consequences</h2>
+  <p><strong>A program can detect this.</strong> If it reads its own code and finds
+  <code>0xCC</code> where it expects something else, it knows it's being debugged.</p>
+  <p class="fragment dim">A standard anti-debugging technique &mdash; and you now
+  understand it completely rather than as a mysterious trick. More in Lecture 9.</p>
+  <p class="fragment" style="margin-top:1.2em"><strong>Hardware watchpoints are a
+  different mechanism.</strong> The CPU has debug registers holding a few addresses;
+  it traps when any is read or written. <em>No bytes are patched.</em></p>
+  <p class="fragment">That's how you answer <em>"what is writing to this
+  variable?"</em> &mdash; otherwise you'd have to find every possible writer by hand.</p>
+  <p class="fragment footnote">Limitation: four debug registers, so four hardware
+  watchpoints.</p>
+</section>
+
+<section>
+  <h2>The toolkit</h2>
+  <pre><code class="language-text" data-trim>
+break f / b *0xADDR       set a breakpoint
+break f if x == 5         conditional — only stop when it matters
+tbreak                    temporary: fires once, removes itself
+watch  &lt;expr&gt;             stop when the value changes (hardware)
+rwatch &lt;expr&gt;             stop when it is read
+
+run / continue            start / resume
+si / ni                   step one instruction / step over calls
+finish                    run until this function returns
+
+info registers [reg]      register state
+x/8gx  $rsp               8 giant-words in hex
+x/20i  $pc                20 instructions
+x/s    $rdi               as a string
+  </code></pre>
+</section>
+
+<section class="center">
+  <h2>Most debugger skill is stopping<br>at the <em>right</em> moment.</h2>
+  <p class="lead fragment" style="margin-top:1.3em">A breakpoint in a loop that runs
+  ten thousand times is useless.</p>
+  <p class="lead fragment">The same breakpoint with <code>if i == 9999</code> is
+  precise.</p>
+</section>
+
+<section>
+  <h2>And sometimes: don't stop at all</h2>
+  <pre><code class="language-text" data-trim>
+break *0x401156
+commands
+  silent
+  printf "acc = %#x\n", $rax
+  continue
+end
+  </code></pre>
+  <p class="fragment">Logs a value every time the location is hit, without pausing.</p>
+  <p class="fragment">For anything more complex, gdb embeds Python &mdash; a
+  <code>gdb.Breakpoint</code> subclass whose <code>stop()</code> returns
+  <code>False</code> logs and continues.</p>
+  <p class="lead fragment">Turning a manual observation into an automated trace is one
+  of the highest-leverage moves available.</p>
+</section>
+
+<section>
+  <h2>Before attaching anything: watch the boundaries</h2>
+  <pre><code class="language-bash" data-trim>
+strace ./program        # every system call
+ltrace ./program        # every library call
+  </code></pre>
+  <p class="fragment"><code>strace</code> &mdash; which files it opens, what it reads
+  and writes, whether it hits the network, what environment variables it checks.</p>
+  <p class="lead fragment">Thirty seconds of <code>strace</code> often answers
+  <em>"what does this thing even touch?"</em> better than an hour of reading.</p>
+  <p class="fragment footnote"><code>ltrace</code> is less reliable &mdash; it depends
+  on calls going through the dynamic linking mechanism (Lecture 8), and misses
+  anything inlined or statically linked.</p>
+</section>
+
+<section>
+  <h2>Patching</h2>
+  <pre><code class="language-text" data-trim>
+je   (0x74)  ↔  jne  (0x75)     invert a branch
+any jump     →  nop  (0x90)     delete a branch
+function     →  ret  (0xc3)     stub it out entirely
+  </code></pre>
+  <pre class="fragment"><code class="language-python" data-trim>
+f = open('program', 'r+b')
+f.seek(0x1189)          # file offset of the je
+f.write(b'\x75')        # make it jne
+f.close()
+  </code></pre>
+  <p class="fragment">One byte. The licence check passes. Permanently, on disk, no
+  debugger.</p>
+</section>
+
+<section class="center">
+  <h2>It feels like winning.</h2>
+  <p class="big fragment" style="margin-top:1.2em">It is an <em>experiment</em>.</p>
+  <p class="lead fragment" style="margin-top:1.2em">Flipping a branch tests the
+  hypothesis <em>"this branch is the check."</em></p>
+  <p class="fragment">Program behaves as expected &rarr; hypothesis supported.<br>
+  Crashes three functions later &rarr; the check has a second part.
+  <strong>Also a result.</strong></p>
+</section>
+
+<section>
+  <h2>Two ways to defeat a licence check</h2>
+  <div class="two">
+    <div class="card">
+      <h3 class="bad">The cheap way</h3>
+      <p>Break on the comparison, flip the flag, it prints "Valid".</p>
+      <p><strong>Two minutes.</strong></p>
+      <p class="dim">What you now know: nothing. You can't produce a valid key, you
+      don't know what makes one valid, and a second check will blindside you.</p>
+    </div>
+    <div class="card fragment">
+      <h3 class="good">The real way</h3>
+      <p>Read <em>both</em> operands. One is from your input; one is computed. Where
+      from? Watchpoint on it.</p>
+      <p>Written after a loop over your input. Characterise it &mdash; sum?
+      shift-and-xor? Feed known inputs, watch the accumulator.</p>
+      <p class="dim">Now you can state what a valid key must satisfy. And construct one.</p>
+    </div>
+  </div>
+</section>
+
+<section class="center">
+  <div class="rule" style="text-align:left">
+    <p class="lead">If your solution only works on <em>this binary</em>, you reverse
+    engineered the binary.</p>
+    <p class="lead">If it works on <em>any input</em>, you reverse engineered the
+    algorithm.</p>
+  </div>
+  <aside class="notes">
+    Channel the patching euphoria here. The Boss tier bans patching on purpose — a
+    student who can only patch has disabled a check, not understood it.
+  </aside>
+</section>
+
+<section class="center">
+  <p class="kicker">Lab &mdash; 40 + 30 minutes</p>
+  <h2>Break, watch, understand</h2>
+  <p class="lead" style="margin-top:1em"><strong>Core</strong> &mdash; break on the
+  comparison. Report what is compared to what, and where the expected value came from.
+  <em>Not</em> "make it say valid."</p>
+  <p class="dim"><strong>Stretch</strong> &mdash; watchpoint on the derived key; report
+  every write and by what.<br>
+  <strong>Boss</strong> &mdash; hand-compute a valid key. <strong class="bad">No
+  patching.</strong> Then patch it, and write why the patch is the inferior solution.</p>
+  <p class="fragment lead"><strong>Lab B:</strong> a gdb Python script that logs the
+  transform's input byte and running accumulator.</p>
+</section>
+
+<section>
+  <p class="kicker">The realistic use of assistance</p>
+  <h2>"Write me the gdb script"</h2>
+  <p>Not "explain this binary." <strong>"Write the script that logs the accumulator
+  each iteration."</strong></p>
+  <p class="fragment">That's a genuinely good use: boilerplate, fiddly syntax, faster
+  to generate than to write.</p>
+  <p class="lead fragment" style="margin-top:1.2em">What comes back is about
+  <strong>ninety percent right</strong>.</p>
+</section>
+
+<section>
+  <h2>And one detail is wrong</h2>
+  <ul>
+    <li class="fragment">It reads <code>$rax</code> when the accumulator lives in
+        <code>$rbx</code> at that point</li>
+    <li class="fragment">Or it hooks the <em>top</em> of the loop body, sampling before
+        the round updates it &mdash; every value one iteration stale</li>
+    <li class="fragment">Or a <code>commands</code> block with no <code>end</code>, and
+        nothing runs at all</li>
+  </ul>
+  <p class="fragment" style="margin-top:1em">The third you notice immediately.</p>
+  <p class="lead bad fragment">The first two you don't &mdash; the script runs, prints
+  a table of plausible numbers, and you analyse a trace in which every value is wrong.</p>
+  <aside class="notes">
+    Falsification Drill: run it on a known 4-byte input, count the lines / check the
+    values against a manual read. The artifact under test today is AI-generated
+    TOOLING, not an AI analysis — the most realistic case.
+  </aside>
+</section>
+
+<section>
+  <h2>The fix takes ten seconds</h2>
+  <p class="lead">&mdash; if you know where the value actually lives.</p>
+  <p class="fragment">If you don't, you re-prompt. And you get another plausible script
+  with a different subtle error, because the model has the same blind spot each time
+  and <strong>no access to the running program to check against</strong>.</p>
+  <div class="rule fragment" style="margin-top:1.3em">
+    <p>Not <em>"AI cannot reverse engineer."</em><br>
+    <strong>"AI writes tooling that is 90% right, and the 10% silently invalidates the
+    output."</strong></p>
+  </div>
+  <p class="fragment">You are not competing with it. You are the part of the loop that
+  can check it &mdash; and that requires knowing which register holds what.</p>
+  <p class="fragment footnote">Which is Lecture 2.</p>
+</section>
+
+<section>
+  <h2>Summary</h2>
+  <ul style="font-size:0.76em">
+    <li>Static: all paths, imprecise. Dynamic: one path, exact. Real work alternates</li>
+    <li><code>info proc mappings</code> is ground truth about what's loaded where</li>
+    <li>A syscall is the user/kernel boundary and cannot be avoided &mdash; an excellent
+        observation point</li>
+    <li>ASLR randomises per run; gdb disables it. Record offsets, not addresses</li>
+    <li>A software breakpoint is an <code>int3</code> (<code>0xCC</code>) byte patch
+        &mdash; which is why a program can detect it</li>
+    <li>Hardware watchpoints patch nothing and answer "who writes here?". There are four</li>
+    <li>Most debugger skill is stopping at the <em>right</em> moment. Conditional
+        breakpoints; scripts that log without stopping</li>
+    <li><code>strace</code>/<code>ltrace</code> first: what does it touch?</li>
+    <li><strong>A patch is an experiment, not a victory</strong></li>
+    <li>Generated tooling is 90% right; the wrong 10% is usually a register or a sample
+        point, and it invalidates every number</li>
+  </ul>
+</section>
+
+<section class="center">
+  <p class="kicker">Next time</p>
+  <h2>Formats, linking and loading</h2>
+  <p class="dim" style="margin-top:1.4em">An executable isn't a monolith. It's a
+  structured document the loader assembles into a process &mdash; and you can intervene
+  without touching the code.</p>
+  <p class="footnote">Optional: <em>Practical Binary Analysis</em> ch. 8&ndash;9.
+  Exercise: a gdb script logging every <code>malloc</code> size; compare with
+  <code>ltrace -e malloc</code> and explain any disagreement.</p>
+</section>
+
+</div></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/5.1.0/reveal.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/5.1.0/plugin/highlight/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/5.1.0/plugin/notes/notes.min.js"></script>
+<script>
+  Reveal.initialize({
+    hash:true, slideNumber:'c/t', transition:'fade', transitionSpeed:'fast',
+    width:1280, height:780, margin:0.07,
+    plugins:[ RevealHighlight, RevealNotes ]
+  });
+</script>
+</body>
+</html>

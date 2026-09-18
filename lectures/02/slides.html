@@ -1,0 +1,494 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Lecture 2 — The machine: registers, memory, instructions</title>
+
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/5.1.0/reveal.min.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/5.1.0/theme/black.min.css" id="theme">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/5.1.0/plugin/highlight/monokai.min.css">
+
+<style>
+  :root { --accent:#ffc857; --dim:#8b949e; --good:#7ee787; --bad:#ff7b72; }
+  .reveal { font-size: 30px; }
+  .reveal h1 { font-size:1.9em; text-transform:none; letter-spacing:-0.01em; }
+  .reveal h2 { font-size:1.35em; text-transform:none; letter-spacing:-0.01em; }
+  .reveal h3 { font-size:1.05em; text-transform:none; color:var(--accent); }
+  .reveal section { text-align:left; }
+  .reveal section.center { text-align:center; }
+  .reveal pre { width:100%; box-shadow:none; font-size:0.62em; }
+  .reveal pre code { padding:1em; border-radius:6px; max-height:620px; }
+  .reveal code:not(pre code){ background:#1c2128; color:var(--accent); padding:1px 7px; border-radius:4px; font-size:0.92em; }
+  .reveal table { font-size:0.72em; }
+  .reveal table th { color:var(--accent); border-bottom:2px solid #30363d; }
+  .reveal table td, .reveal table th { padding:0.35em 0.7em; }
+  .reveal em { color:var(--accent); font-style:italic; }
+  .reveal strong { color:#fff; }
+  .lead { font-size:1.15em; line-height:1.45; }
+  .dim { color:var(--dim); }
+  .good { color:var(--good); }
+  .bad { color:var(--bad); }
+  .big { font-size:1.5em; line-height:1.35; }
+  .kicker { color:var(--accent); font-size:0.6em; letter-spacing:0.16em; text-transform:uppercase; margin-bottom:0.6em; }
+  .rule { border-left:4px solid var(--accent); padding-left:0.9em; }
+  .terminal { background:#0d1117; border:1px solid #30363d; border-radius:6px; padding:0.8em 1em;
+              font-family:monospace; font-size:0.66em; line-height:1.55; white-space:pre; overflow-x:auto; }
+  .two { display:grid; grid-template-columns:1fr 1fr; gap:1.2em; align-items:start; }
+  .reveal ul { margin-left:0.4em; }
+  .reveal li { margin-bottom:0.4em; }
+  .footnote { font-size:0.6em; color:var(--dim); margin-top:1.2em; }
+  .reveal .slide-number { font-size:0.5em; }
+</style>
+</head>
+<body>
+<div class="reveal"><div class="slides">
+
+<section class="center">
+  <p class="kicker">Reverse Engineering &middot; Lecture 2</p>
+  <h1>The machine:<br>registers, memory, instructions</h1>
+  <p class="dim" style="margin-top:1.4em">A CPU is a state machine. Nothing more
+  mysterious is happening, ever.</p>
+  <aside class="notes">
+    Warm-up first (15 min): five retrieval questions from L1 — what survives
+    compilation, file vs xxd, why no perfect decompiler, the AURA magic bytes, the
+    open question on the length field. Settle them by doing, not telling.
+  </aside>
+</section>
+
+<section>
+  <h2>The whole machine</h2>
+  <pre><code class="language-text" data-trim>
+┌─────────────── CPU ───────────────┐      ┌──── MEMORY ────┐
+│ rax rbx rcx rdx rsi rdi rbp rsp   │      │  one flat      │
+│ r8  r9  r10 r11 r12 r13 r14 r15   │◀────▶│  array of      │
+│ rip                               │      │  bytes         │
+│ flags:  ZF  SF  CF  OF            │      │                │
+└───────────────────────────────────┘      └────────────────┘
+  </code></pre>
+  <p class="fragment">Every instruction is a function from that state to a new
+  state. <strong>There is nothing else.</strong></p>
+</section>
+
+<section>
+  <h2>Three things that contradict your C intuition</h2>
+  <ul>
+    <li><strong>Memory has no types.</strong> A byte is a byte. <code>int</code>,
+        <code>double</code>, <code>char*</code>, <code>struct account</code> do not
+        exist here &mdash; only an address, a width, and an operation</li>
+    <li class="fragment"><strong>There are no variables.</strong> A variable was a
+        name for a register or a stack slot. After compilation: the register or slot
+        remains, the name does not</li>
+    <li class="fragment"><strong><code>rip</code> is an ordinary register</strong>
+        that usually increments. Control flow is writing a different value into it</li>
+  </ul>
+  <p class="fragment dim">Almost everything interesting in RE and in security comes
+  from the word <em>usually</em>.</p>
+</section>
+
+<section>
+  <h2>The register file</h2>
+  <p><code>rax rbx rcx rdx rsi rdi rbp rsp</code> and <code>r8</code>&ndash;<code>r15</code></p>
+  <p class="fragment">The first eight carry names from the 16-bit 8086 of 1978:
+  <em>accumulator</em>, <em>counter</em>, <em>source index</em>, <em>destination
+  index</em>. On x86-64 that's mostly history &mdash; <code>rax</code> is not special
+  to the hardware.</p>
+  <p class="fragment">Two keep meaning <em>by convention</em>:</p>
+  <ul class="fragment">
+    <li><code>rsp</code> &mdash; stack pointer. Modified implicitly by
+        <code>push</code>/<code>pop</code>/<code>call</code>/<code>ret</code></li>
+    <li><code>rbp</code> &mdash; frame pointer</li>
+  </ul>
+  <p class="fragment footnote">Both are Lecture 4. Which register holds what is
+  otherwise the compiler's choice &mdash; except where the calling convention forces
+  it, and that constraint is what makes signatures recoverable.</p>
+</section>
+
+<section>
+  <h2>Four widths, one register</h2>
+  <pre><code class="language-text" data-trim>
+ 63                    31        15     7    0
+ ├──────────────────────┼─────────┼──────┼────┤
+ │                     rax                    │   64-bit
+                        │        eax          │   32-bit
+                                  │    ax     │   16-bit
+                                        │ al  │   8-bit
+  </code></pre>
+  <p class="fragment">Same pattern throughout:
+  <code>rbx</code>/<code>ebx</code>/<code>bx</code>/<code>bl</code>,
+  <code>r8</code>/<code>r8d</code>/<code>r8w</code>/<code>r8b</code></p>
+</section>
+
+<section class="center">
+  <p class="kicker">Memorise this one</p>
+  <div class="rule" style="text-align:left">
+    <p class="lead">Writing to a <strong>32-bit</strong> register
+    <span class="bad">zeroes the upper 32 bits</span> of the full register.</p>
+    <p class="lead">Writing to a <strong>16-bit or 8-bit</strong> register leaves the
+    upper bits <span class="good">unchanged</span>.</p>
+  </div>
+</section>
+
+<section>
+  <h2>Watch it happen</h2>
+  <pre><code class="language-asm" data-trim data-line-numbers="1|2|3|4">
+mov rax, 0xffffffffffffffff   ; rax = 0xffffffffffffffff
+mov eax, 1                    ; rax = 0x0000000000000001   ← upper half zeroed
+mov ax,  2                    ; rax = 0x0000000000000002   ← upper bits preserved
+mov al,  3                    ; rax = 0x0000000000000003   ← upper bits preserved
+  </code></pre>
+  <aside class="notes">
+    Do this live in gdb with the register window up. Nobody believes it otherwise.
+    Audible reaction on line 2.
+  </aside>
+</section>
+
+<section>
+  <h2>There is no principle here</h2>
+  <p>AMD made this decision designing the 64-bit extension, for instruction-encoding
+  efficiency: zero-extension avoids a prefix in the common case. The 16- and 8-bit
+  forms kept the old behaviour for backward compatibility.</p>
+  <p class="lead fragment" style="margin-top:1.2em">You cannot derive it.
+  <strong>You either know it or you don't.</strong></p>
+  <p class="fragment dim">Remember that this rule is <em>arbitrary</em>. We come back
+  to it at the end of the lecture for a reason.</p>
+</section>
+
+<section>
+  <h2>Memory: two operations</h2>
+  <pre><code class="language-asm" data-trim>
+mov rax, [rbx]     ; LOAD:  rax = the 8 bytes at address rbx
+mov [rbx], rax     ; STORE: write rax's 8 bytes to address rbx
+  </code></pre>
+  <p class="fragment">Brackets mean "go to memory". No brackets means the register
+  itself.</p>
+  <p class="fragment">Width comes from the register, or is stated when ambiguous:</p>
+  <pre class="fragment"><code class="language-asm" data-trim>
+mov eax, [rbx]               ; load 4 bytes
+mov al,  [rbx]               ; load 1 byte
+mov DWORD PTR [rbx], 5       ; store 4 bytes
+mov BYTE PTR  [rbx], 5       ; store 1 byte
+  </code></pre>
+</section>
+
+<section>
+  <h2>Narrow value, wide register</h2>
+  <pre><code class="language-asm" data-trim>
+movzx rax, BYTE PTR [rbx]    ; zero-extend: upper bits become 0
+movsx rax, BYTE PTR [rbx]    ; sign-extend: upper bits copy the sign bit
+  </code></pre>
+  <p class="fragment">The byte <code>0xFF</code>:<br>
+  <code>movzx</code> &rarr; <span class="good">255</span>&nbsp;&nbsp;&nbsp;
+  <code>movsx</code> &rarr; <span class="bad">&minus;1</span></p>
+  <div class="rule fragment" style="margin-top:1em">
+    <p>The instruction the compiler chose tells you whether the source variable was
+    <strong>signed</strong> &mdash; information the type system carried and then
+    discarded.</p>
+  </div>
+  <p class="fragment footnote">First instance of the Lecture 1 principle in action:
+  the compiler had no choice, so the choice is evidence.</p>
+</section>
+
+<section>
+  <h2>The twenty that matter</h2>
+  <table>
+    <tr><td><code>mov d, s</code></td><td><code>d = s</code></td>
+        <td><code>cmp a, b</code></td><td><code>a - b</code>, set flags, discard</td></tr>
+    <tr><td><code>movzx</code>/<code>movsx</code></td><td>extend</td>
+        <td><code>test a, b</code></td><td><code>a &amp; b</code>, set flags, discard</td></tr>
+    <tr><td><code>lea d,[e]</code></td><td>address of <code>e</code></td>
+        <td><code>push</code>/<code>pop</code></td><td>stack (L4)</td></tr>
+    <tr><td><code>add</code>/<code>sub</code></td><td>arithmetic</td>
+        <td><code>call</code>/<code>ret</code></td><td>call/return (L4)</td></tr>
+    <tr><td><code>imul</code></td><td>signed multiply</td>
+        <td><code>jmp</code></td><td>unconditional jump</td></tr>
+    <tr><td><code>and or xor not</code></td><td>bitwise</td>
+        <td><code>jcc</code></td><td>conditional jump (L3)</td></tr>
+    <tr><td><code>shl shr sar</code></td><td>shifts</td>
+        <td><code>nop</code></td><td>nothing</td></tr>
+  </table>
+  <p class="fragment">Over a thousand instructions exist. These are ~90% of compiled
+  code.</p>
+</section>
+
+<section>
+  <h2>Two idioms &mdash; read as single units</h2>
+  <h3><code>xor eax, eax</code></h3>
+  <p>Sets <code>eax</code> to zero. Anything XORed with itself is zero. Two bytes to
+  encode instead of five for <code>mov eax, 0</code>.</p>
+  <h3 class="fragment"><code>test rax, rax</code></h3>
+  <p class="fragment">Asks "is <code>rax</code> zero?". ANDing a value with itself
+  changes nothing, so the only useful output is the flags.</p>
+  <p class="fragment dim">Neither is obfuscation. Both are everywhere. Stop decoding
+  them and start recognising them.</p>
+</section>
+
+<section>
+  <h2>Addressing modes</h2>
+  <pre><code class="language-text" data-trim>
+[ base + index*scale + displacement ]        scale ∈ {1, 2, 4, 8}
+  </code></pre>
+  <pre><code class="language-asm" data-trim>
+[rbx]                  ; the 8 bytes at rbx
+[rbx + 8]              ; at rbx+8
+[rbx + rcx*4]          ; at rbx + 4*rcx
+[rbx + rcx*8 + 16]     ; at rbx + 8*rcx + 16
+[rip + 0x2e4a]         ; relative to the NEXT instruction — a global
+  </code></pre>
+  <p class="fragment">The hardware computes all of that in one instruction. That's
+  why the form exists: array indexing is one operation, not three.</p>
+</section>
+
+<section class="center">
+  <h2 class="good">The scale field is free<br>type information.</h2>
+  <p class="lead fragment" style="margin-top:1.2em">A variable index times
+  <strong>4</strong> means an array of 4-byte elements. Times <strong>8</strong>,
+  8-byte elements or pointers.</p>
+  <p class="lead fragment">A <em>constant</em> displacement with no index usually
+  means a <strong>struct field</strong>.</p>
+  <p class="fragment dim">The compiler was obliged to emit it correctly. Lecture 5
+  builds type recovery on exactly this.</p>
+</section>
+
+<section>
+  <h2>RIP-relative, and the trap</h2>
+  <p><code>[rip + 0x2e4a]</code> is how modern code refers to globals and constants.
+  Position-independent code needs it: the program doesn't know where it will be
+  loaded, but it always knows the distance from one part of itself to another.</p>
+  <div class="rule fragment" style="margin-top:1.2em">
+    <p class="lead">The offset is relative to the address of the <strong>next</strong>
+    instruction &mdash; not the current one.</p>
+  </div>
+  <p class="fragment">Compute from the wrong base and you land somewhere
+  plausible-looking and entirely wrong.</p>
+  <p class="fragment footnote">This catches everyone exactly once. Make it today.</p>
+</section>
+
+<section>
+  <h2><code>lea</code> is arithmetic, not memory</h2>
+  <pre><code class="language-asm" data-trim>
+lea rax, [rbx+8]    ; rax = rbx + 8            (compute the address)
+mov rax, [rbx+8]    ; rax = the value at rbx+8 (go and fetch it)
+  </code></pre>
+  <p class="fragment"><em>Load effective address</em>: compute what the addressing
+  mode describes, put it in a register, <strong>never touch memory</strong>.</p>
+</section>
+
+<section>
+  <h2>The compiler's pocket calculator</h2>
+  <pre><code class="language-asm" data-trim>
+lea rax, [rdi + rdi*2]      ; rax = rdi * 3
+lea rax, [rdi*8 - 4]        ; rax = rdi * 8 - 4
+lea rax, [rdi + rsi]        ; rax = rdi + rsi   (a three-operand add)
+  </code></pre>
+  <p class="fragment">None of these touch memory. None are about addresses. The
+  addressing unit is fast and doesn't disturb the flags, so compilers use it to do
+  sums.</p>
+  <p class="fragment lead">When you see <code>lea</code>, <strong>do not assume a
+  pointer.</strong> Read the brackets as an arithmetic expression.</p>
+</section>
+
+<section>
+  <h2>Flags</h2>
+  <table>
+    <tr><th>Flag</th><th>Set when</th></tr>
+    <tr><td><strong>ZF</strong> zero</td><td>the result was zero</td></tr>
+    <tr><td><strong>SF</strong> sign</td><td>the top bit was set (negative, if signed)</td></tr>
+    <tr><td><strong>CF</strong> carry</td><td>carried/borrowed out of the top bit (unsigned overflow)</td></tr>
+    <tr><td><strong>OF</strong> overflow</td><td>overflowed as a <em>signed</em> value</td></tr>
+  </table>
+  <p class="fragment" style="margin-top:1em"><code>cmp a, b</code> computes
+  <code>a - b</code> purely to set these, then throws the subtraction away. If
+  <code>a == b</code> the result is zero, so <code>ZF</code> is set.</p>
+  <p class="fragment">That is how equality is tested: <em>subtract, and ask whether
+  the answer was zero.</em></p>
+</section>
+
+<section>
+  <h2>The comparison and the branch are separate</h2>
+  <p>Two instructions, not one. Other instructions in between <strong>can overwrite
+  the flags</strong>.</p>
+  <p class="fragment">When tracing, the flags at the jump are the ones set by the
+  most recent flag-modifying instruction &mdash; which is not always the
+  <code>cmp</code> sitting directly above it.</p>
+  <p class="fragment dim">Which conditional jump reads which flag is Lecture 3.</p>
+</section>
+
+<section class="center">
+  <p class="kicker">Lab A &mdash; 40 minutes &middot; first 12 laptops closed</p>
+  <h2>Be the CPU</h2>
+  <p class="lead" style="margin-top:1.2em"><strong>Core</strong> &mdash; hand-trace 20
+  instructions on paper. Then verify in gdb.</p>
+  <p class="lead">If they disagree, find <em>the first instruction where they
+  diverged</em> &mdash; don't redo the whole trace.</p>
+  <p class="dim fragment"><strong>Stretch</strong> &mdash; trace with memory and
+  <code>lea</code>; hand-decode 5 instructions from raw bytes.<br>
+  <strong>Boss</strong> &mdash; one instruction's operand size changes the final answer.
+  Find it.</p>
+  <aside class="notes">
+    Enforce the closed laptops physically — walk the room. Watch for students who
+    assume they're wrong when gdb disagrees; often gdb is exposing their
+    zero-extension error, which is the whole point. Bisection is the skill.
+  </aside>
+</section>
+
+<section>
+  <h2>Reading a real function</h2>
+  <pre><code class="language-asm" data-trim data-line-numbers="2-3|5-6|7|8|11">
+sum_array:
+    xor  eax, eax                    ; total = 0
+    xor  ecx, ecx                    ; i = 0
+.loop:
+    cmp  ecx, esi                    ; compare i with n
+    jge  .done                       ; if i &gt;= n, finish
+    add  eax, DWORD PTR [rdi+rcx*4]  ; total += arr[i]
+    add  ecx, 1                      ; i++
+    jmp  .loop
+.done:
+    ret                              ; return total in eax
+  </code></pre>
+</section>
+
+<section>
+  <h2>What we just recovered</h2>
+  <ul>
+    <li>Two registers zeroed at entry &rarr; one accumulates, one counts</li>
+    <li class="fragment"><code>[rdi + rcx*4]</code> &rarr; <code>rdi</code> is the base
+        of an array of <strong>4-byte</strong> elements, <code>rcx</code> is the index</li>
+    <li class="fragment"><code>rdi</code> is arg 1, <code>rsi</code> is arg 2 (L4)
+        &rarr; a pointer and a count</li>
+    <li class="fragment"><code>eax</code> holds the result at <code>ret</code>
+        &rarr; returns a 4-byte integer</li>
+  </ul>
+  <p class="big good fragment" style="margin-top:1em"><code>int sum_array(int *arr, int n)</code></p>
+  <p class="fragment">No symbols. No source. Recovered from instruction widths and an
+  addressing mode.</p>
+</section>
+
+<section class="center">
+  <h2>None of that was written<br>by a programmer.</h2>
+  <p class="lead fragment" style="margin-top:1.3em">The <code>*4</code>, the 32-bit
+  register names, the argument registers &mdash; all of it was
+  <strong>forced on the compiler by the machine</strong>.</p>
+  <p class="lead fragment">That is where your leverage always comes from.</p>
+</section>
+
+<section>
+  <h2><code>-O0</code> versus <code>-O2</code></h2>
+  <div class="two">
+    <div>
+      <h3><code>-O0</code></h3>
+      <p style="font-size:0.85em">Every local has a stack slot. Reading a variable is
+      a load from <code>[rbp-N]</code>; writing is a store. Verbose, maps almost
+      line-by-line onto source.</p>
+    </div>
+    <div>
+      <h3><code>-O2</code></h3>
+      <p style="font-size:0.85em">Locals live in registers. Loads and stores largely
+      vanish. <code>sum_array</code> was this shape &mdash; nothing touches the stack,
+      the loop variable never has an address.</p>
+    </div>
+  </div>
+  <p class="fragment" style="margin-top:1em"><code>-O0</code> examples can mislead.
+  Production binaries look like the second kind. We use both deliberately.</p>
+</section>
+
+<section class="center">
+  <p class="kicker">Lab B &mdash; 30 minutes</p>
+  <h2>Instruction archaeology</h2>
+  <p class="lead" style="margin-top:1.2em">Take <code>objdump -d</code> of one
+  function and annotate <strong>every line</strong> in plain English. About 30
+  instructions.</p>
+  <p class="dim">Tedious on purpose. It's the last time you'll read line-by-line
+  &mdash; from Lecture 3 you read in blocks &mdash; and doing it once at full
+  resolution is what makes block-reading possible.</p>
+</section>
+
+<section>
+  <p class="kicker">The obvious objection, again</p>
+  <h2>A debugger does this instantly</h2>
+  <p>So why trace twenty instructions by hand?</p>
+  <p class="lead fragment" style="margin-top:1.2em">Because the debugger tells you
+  the answer and <strong>nothing else</strong>.</p>
+  <p class="fragment">Tracing by hand builds the model that lets you
+  <em>predict</em> the answer &mdash; which is what you need for code you cannot run:
+  a function deep in a stripped binary, a branch that only fires under conditions you
+  can't reproduce, a fragment quoted in a report.</p>
+  <p class="fragment dim">Reading assembly fluently means knowing what it will do
+  without executing it.</p>
+</section>
+
+<section>
+  <h2>And there's a second reason</h2>
+  <p>Look back at what this lecture contained:</p>
+  <ul class="fragment">
+    <li>The zero-extension rule</li>
+    <li>Which registers exist, and their names</li>
+    <li>The encoding of addressing modes</li>
+    <li>RIP-relative measuring from the <em>next</em> instruction</li>
+    <li><code>xor eax, eax</code> as the idiom for zero</li>
+  </ul>
+  <p class="lead fragment" style="margin-top:1em">All of it is <strong>arbitrary</strong>.
+  None of it follows from first principles.</p>
+</section>
+
+<section>
+  <h2>Which is exactly where automation fails</h2>
+  <p>Ask a model for the final register state of a short sequence. It will usually
+  track the arithmetic <span class="good">correctly</span> &mdash; and then report a
+  full 64-bit value where the hardware <span class="bad">zeroed the upper half</span>.</p>
+  <div class="rule fragment" style="margin-top:1.2em">
+    <p>The arithmetic is the part that follows from general principles.<br>
+    The zero-extension rule is the part that does not.</p>
+  </div>
+  <p class="fragment">Confident. Internally consistent. Wrong in one specific place.</p>
+  <p class="lead fragment">You catch it with <code>info registers</code> &mdash; and
+  only if you knew the rule existed.</p>
+  <aside class="notes">
+    Falsification Drill: state the claim, ask the room what observation would falsify
+    it (one: info registers at the final instruction), make it, record the verdict and
+    the reason on the scoreboard. The reason column is the valuable one.
+  </aside>
+</section>
+
+<section>
+  <h2>Summary</h2>
+  <ul style="font-size:0.82em">
+    <li>State = 16 registers + <code>rip</code> + flags + a flat byte array. Nothing else</li>
+    <li>Memory has no types. Types were compiler fiction, discarded</li>
+    <li>32-bit writes zero the upper half; 16- and 8-bit writes do not</li>
+    <li><code>movzx</code> vs <code>movsx</code> reveals whether the source was signed</li>
+    <li><code>[base + index*scale + disp]</code> &mdash; the scale is the element size, free</li>
+    <li>RIP-relative is measured from the <strong>next</strong> instruction</li>
+    <li><code>lea</code> computes without accessing memory; mostly it's arithmetic</li>
+    <li><code>cmp</code>/<code>test</code> set flags and discard the result; the branch
+        is a separate instruction</li>
+    <li>Hand-execution builds prediction &mdash; and this material is arbitrary, so it
+        must be known rather than derived</li>
+  </ul>
+</section>
+
+<section class="center">
+  <p class="kicker">Next time</p>
+  <h2>Control flow:<br>decisions and loops in machine code</h2>
+  <p class="dim" style="margin-top:1.4em">The compiler has a small, finite vocabulary
+  for turning your control structures into jumps. Learn the vocabulary and you read
+  it backwards.</p>
+  <p class="footnote">Optional: CS:APP §3.1&ndash;3.5. Or microcorruption's first two
+  levels &mdash; a different ISA on purpose.</p>
+</section>
+
+</div></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/5.1.0/reveal.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/5.1.0/plugin/highlight/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/5.1.0/plugin/notes/notes.min.js"></script>
+<script>
+  Reveal.initialize({
+    hash:true, slideNumber:'c/t', transition:'fade', transitionSpeed:'fast',
+    width:1280, height:780, margin:0.07,
+    plugins:[ RevealHighlight, RevealNotes ]
+  });
+</script>
+</body>
+</html>

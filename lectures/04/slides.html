@@ -1,0 +1,418 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Lecture 4 — The stack, calling conventions, and functions</title>
+
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/5.1.0/reveal.min.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/5.1.0/theme/black.min.css" id="theme">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/5.1.0/plugin/highlight/monokai.min.css">
+
+<style>
+  :root { --accent:#ffc857; --dim:#8b949e; --good:#7ee787; --bad:#ff7b72; }
+  .reveal { font-size: 30px; }
+  .reveal h1 { font-size:1.9em; text-transform:none; letter-spacing:-0.01em; }
+  .reveal h2 { font-size:1.35em; text-transform:none; letter-spacing:-0.01em; }
+  .reveal h3 { font-size:1.05em; text-transform:none; color:var(--accent); }
+  .reveal section { text-align:left; }
+  .reveal section.center { text-align:center; }
+  .reveal pre { width:100%; box-shadow:none; font-size:0.62em; }
+  .reveal pre code { padding:1em; border-radius:6px; max-height:620px; }
+  .reveal code:not(pre code){ background:#1c2128; color:var(--accent); padding:1px 7px; border-radius:4px; font-size:0.92em; }
+  .reveal table { font-size:0.72em; }
+  .reveal table th { color:var(--accent); border-bottom:2px solid #30363d; }
+  .reveal table td, .reveal table th { padding:0.35em 0.7em; }
+  .reveal em { color:var(--accent); font-style:italic; }
+  .reveal strong { color:#fff; }
+  .lead { font-size:1.15em; line-height:1.45; }
+  .dim { color:var(--dim); }
+  .good { color:var(--good); }
+  .bad { color:var(--bad); }
+  .big { font-size:1.5em; line-height:1.35; }
+  .kicker { color:var(--accent); font-size:0.6em; letter-spacing:0.16em; text-transform:uppercase; margin-bottom:0.6em; }
+  .rule { border-left:4px solid var(--accent); padding-left:0.9em; }
+  .terminal { background:#0d1117; border:1px solid #30363d; border-radius:6px; padding:0.8em 1em;
+              font-family:monospace; font-size:0.66em; line-height:1.55; white-space:pre; overflow-x:auto; }
+  .two { display:grid; grid-template-columns:1fr 1fr; gap:1.2em; align-items:start; }
+  .reveal ul { margin-left:0.4em; }
+  .reveal li { margin-bottom:0.4em; }
+  .footnote { font-size:0.6em; color:var(--dim); margin-top:1.2em; }
+  .reveal .slide-number { font-size:0.5em; }
+</style>
+</head>
+<body>
+<div class="reveal"><div class="slides">
+
+<section class="center">
+  <p class="kicker">Reverse Engineering &middot; Lecture 4</p>
+  <h1>The stack, calling conventions,<br>and functions</h1>
+  <p class="dim" style="margin-top:1.4em">Every function announces its own signature
+  in the way it touches registers.</p>
+  <aside class="notes">
+    Dense session, will run long — pre-plan cuts: Lab A Boss first, then tail
+    calls/red zone. Protect the recursion demo and the ABI drill. Issue reference
+    card #3 at the start.
+  </aside>
+</section>
+
+<section>
+  <h2>The CPU has no idea what a function is</h2>
+  <p>It has <code>call</code> and <code>ret</code> &mdash; jumps that remember where
+  they came from &mdash; and a register conventionally used as a stack pointer.</p>
+  <p class="fragment">Arguments, return values, locals, scope: all of it is an
+  <strong>agreement</strong> between the compiler and everything it must interoperate
+  with.</p>
+  <p class="fragment">On 64-bit Linux that agreement is the <em>System V AMD64
+  ABI</em>. Documented, fixed, mandatory.</p>
+  <div class="rule fragment" style="margin-top:1.2em">
+    <p class="lead">The compiler had <strong>no choice</strong> about it. Which is
+    why a stripped function still announces its own signature.</p>
+  </div>
+</section>
+
+<section>
+  <h2>The stack is just memory</h2>
+  <pre><code class="language-text" data-trim>
+  high addresses
+  ┌────────────────────┐
+  │  caller's frame    │
+  ├────────────────────┤
+  │  return address    │  ← placed here by `call`
+  │  saved rbp         │  ← rbp points here
+  │  local a  [rbp-8]  │
+  │  local b  [rbp-16] │
+  └────────────────────┘  ← rsp (top of stack)
+  low addresses              grows DOWNWARD
+  </code></pre>
+  <p class="fragment">No special hardware structure. No protection. No type.
+  <code>rsp</code> holds the address of the top.</p>
+</section>
+
+<section>
+  <h2>Four instructions, defined by <code>rsp</code></h2>
+  <pre><code class="language-text" data-trim data-line-numbers="1|2|3|4">
+push rax   ≡   sub rsp, 8       ;  mov [rsp], rax
+pop  rax   ≡   mov rax, [rsp]   ;  add rsp, 8
+call f     ≡   push (address of next instruction)  ;  jmp f
+ret        ≡   pop rip
+  </code></pre>
+  <p class="fragment">Read the last two again.</p>
+  <p class="lead fragment"><code>call</code> pushes the address to come back to.
+  <code>ret</code> pops it into <code>rip</code>.</p>
+</section>
+
+<section class="center">
+  <h2 class="bad">The return address is ordinary data<br>sitting in memory.</h2>
+  <p class="lead fragment" style="margin-top:1.3em">Nothing marks it as special.</p>
+  <p class="lead fragment">If something writes to that location, the function returns
+  somewhere else.</p>
+  <p class="fragment dim">Hold that thought for ninety minutes.</p>
+</section>
+
+<section>
+  <h2>The ABI &mdash; the parts you need</h2>
+  <pre><code class="language-text" data-trim>
+Integer / pointer arguments, in order:
+    rdi   rsi   rdx   rcx   r8   r9      then the stack
+     1     2     3     4     5    6
+
+Return value:     rax            (rdx:rax for 128-bit)
+Floating point:   xmm0-xmm7 args, xmm0 return
+
+Callee-saved:     rbx rbp r12 r13 r14 r15   (must be preserved)
+Caller-saved:     rax rcx rdx rsi rdi r8-r11 (may be destroyed)
+
+Stack alignment:  rsp 16-byte aligned at the point of `call`
+Red zone:         128 bytes below rsp, usable without adjusting rsp
+  </code></pre>
+  <p class="fragment footnote">No logic to the argument order. Memorise it. It's on
+  card #3 and it'll be second nature within two sessions.</p>
+</section>
+
+<section>
+  <h2>Callee-saved vs caller-saved</h2>
+  <p>Some registers are <strong>guaranteed to survive</strong> a call. The rest may be
+  destroyed by it.</p>
+  <p class="fragment">A function wanting to use a callee-saved register must save and
+  restore it &mdash; which is why prologues often open with <code>push rbx</code>.</p>
+  <div class="rule fragment" style="margin-top:1.2em">
+    <p>That push is a <em>signal</em>: this function intends to keep something alive
+    across a call it is going to make.</p>
+  </div>
+</section>
+
+<section class="center">
+  <p class="kicker">The technique this lecture exists to teach</p>
+  <h2 class="good">A register that is read before it is<br>written was an incoming argument.</h2>
+  <p class="lead fragment" style="margin-top:1.3em">The value came from somewhere.
+  The only somewhere is the caller.</p>
+  <p class="fragment">Written before read &rarr; scratch space. A local, not a
+  parameter.</p>
+  <p class="fragment dim">Not a heuristic. It follows from a convention that was not
+  optional for the compiler.</p>
+</section>
+
+<section>
+  <h2>Applied to an unknown function</h2>
+  <pre><code class="language-asm" data-trim data-line-numbers="3|4|6">
+sub_401180:
+    push rbp
+    mov  rbp, rsp
+    mov  DWORD PTR [rbp-0x14], edi   ; edi read → arg 1, 4 bytes
+    mov  QWORD PTR [rbp-0x20], rsi   ; rsi read → arg 2, 8 bytes
+    ...
+    mov  eax, ...                    ; something meaningful in eax
+    leave
+    ret
+  </code></pre>
+  <ul class="fragment" style="font-size:0.85em">
+    <li><code>rdx</code> never read &rarr; <strong>no third argument</strong></li>
+    <li><code>eax</code> set before <code>ret</code> &rarr; returns 4 bytes</li>
+  </ul>
+  <p class="big good fragment"><code>int sub_401180(int, void *)</code></p>
+  <p class="fragment footnote">No symbols. Never ran it. Disassembler only.</p>
+</section>
+
+<section>
+  <h2>Arity is certain. Types are not.</h2>
+  <p>An 8-byte argument might be a pointer, a <code>long</code>, or a
+  <code>size_t</code>.</p>
+  <p class="fragment">You find out by watching how it's <em>used</em>:</p>
+  <ul class="fragment">
+    <li>dereferenced &rarr; pointer</li>
+    <li>passed to <code>strlen</code> &rarr; <code>char *</code></li>
+    <li>compared against a small number &rarr; a count</li>
+  </ul>
+  <div class="rule fragment" style="margin-top:1em">
+    <p>Keep these distinct in your notes. <strong>Overclaiming a type you merely
+    suspect</strong> is the failure this course works hardest to prevent.</p>
+  </div>
+</section>
+
+<section>
+  <h2>The classic <code>-O0</code> frame</h2>
+  <pre><code class="language-asm" data-trim>
+    push rbp            ; save the caller's frame pointer
+    mov  rbp, rsp       ; establish ours
+    sub  rsp, 0x20      ; reserve 32 bytes for locals
+    ...
+    leave               ; ≡ mov rsp, rbp ; pop rbp
+    ret
+  </code></pre>
+  <p class="fragment">With <code>rbp</code> fixed, every local has a stable address:
+  <code>[rbp-0x8]</code>, <code>[rbp-0x10]</code>&hellip;</p>
+  <p class="fragment">Return address always at <code>[rbp+8]</code>. Caller's saved
+  <code>rbp</code> at <code>[rbp]</code>.</p>
+  <p class="lead fragment">Build the offset table first. Then the function becomes
+  legible.</p>
+</section>
+
+<section>
+  <h2>At <code>-O2</code> the textbook frame is often gone</h2>
+  <table>
+    <tr><th></th><th>What you'll see</th></tr>
+    <tr><td><strong>Frame pointer omission</strong></td>
+        <td><code>rbp</code> reused as a general register. Locals at
+        <code>[rsp+N]</code> &mdash; and <code>rsp</code> <em>moves</em>, so the same
+        local has different offsets at different points. Look for
+        <code>sub rsp, N</code>: <code>N</code> is the frame size</td></tr>
+    <tr class="fragment"><td><strong>The red zone</strong></td>
+        <td>128 bytes <em>below</em> <code>rsp</code> are yours. A leaf function uses
+        them without adjusting <code>rsp</code>. Writes to <code>[rsp-8]</code> look
+        illegal. They aren't</td></tr>
+    <tr class="fragment"><td><strong>Tail calls</strong></td>
+        <td><code>jmp</code> to another function instead of
+        <code>call</code>+<code>ret</code>. Not spaghetti &mdash; a call that reused
+        the frame</td></tr>
+  </table>
+  <p class="fragment" style="margin-top:0.8em">The frame is a convenience the compiler
+  can drop. <strong>The ABI is a contract it cannot.</strong></p>
+</section>
+
+<section class="center">
+  <p class="kicker">Lab A &mdash; 40 minutes</p>
+  <h2>Signatures from silence</h2>
+  <p class="lead" style="margin-top:1.2em"><strong>Core</strong> &mdash; six stripped
+  functions. Give the arity of each, justified by which argument registers are read
+  before written.</p>
+  <p class="dim"><strong>Stretch</strong> &mdash; add types where the code reveals them,
+  with a confidence marker.<br>
+  <strong>Boss</strong> &mdash; one function uses a <em>non-standard</em> calling
+  convention. Find it, and say how you know.</p>
+  <aside class="notes">
+    Reward the sentence: "it reads rdx before writing it, so at least three
+    arguments." That single move is the whole lab. The Boss function is the
+    AI-hostile artifact — if you cut the tier, still show it for 60 seconds.
+  </aside>
+</section>
+
+<section>
+  <h2>Recursion needs no special machinery</h2>
+  <pre><code class="language-asm" data-trim data-line-numbers="2-3|7|8">
+fact:
+    push rbx
+    mov  ebx, edi            ; keep n in a CALLEE-SAVED register
+    cmp  edi, 1
+    jle  .Lbase
+    lea  edi, [rbx-1]        ; n-1
+    call fact                ; recurse — free to destroy rdi
+    imul eax, ebx            ; result *= n   ← needs n to still be here
+    jmp  .Ldone
+.Lbase:
+    mov  eax, 1
+.Ldone:
+    pop  rbx
+    ret
+  </code></pre>
+  <p class="fragment">The <code>push rbx</code> isn't decoration. It's what makes the
+  multiply at the bottom correct.</p>
+  <aside class="notes">
+    Draw each frame on the board as it's pushed. Step three levels deep, then step out
+    and watch them pop with rax carrying the product up. Recursion stops being scary
+    the moment you can see the frames.
+  </aside>
+</section>
+
+<section>
+  <p class="kicker">Two facts, already established</p>
+  <h2>Putting them together</h2>
+  <ol>
+    <li><code>call</code> pushes the return address onto the stack</li>
+    <li class="fragment">Local variables live on the stack, <strong>immediately
+        adjacent to it</strong></li>
+  </ol>
+  <p class="lead fragment" style="margin-top:1.3em">Nothing distinguishes the return
+  address from any other eight bytes.</p>
+</section>
+
+<section>
+  <h2>Ninety seconds, in a debugger</h2>
+  <div class="terminal">(gdb) x/gx $rbp+8                      # the saved return address
+0x7fffffffe0c8: 0x0000000000401210
+
+(gdb) set {long}($rbp+8) = 0x401196    # overwrite it
+(gdb) continue
+
+  you win.                             # a function nobody called</div>
+  <p class="fragment" style="margin-top:1em">No bug was exploited. I wrote to the
+  stack in a debugger.</p>
+  <p class="lead fragment">Now imagine the <em>program</em> writes past the end of a
+  buffer that happens to sit just below it. Same effect, no debugger.</p>
+</section>
+
+<section class="center">
+  <h2>That is the buffer overflow.</h2>
+  <p class="lead fragment" style="margin-top:1.2em">A program that copies user input
+  into a fixed-size stack buffer without checking the length hands the attacker
+  control of <code>rip</code>.</p>
+  <p class="fragment dim">We are not doing that field in this course.</p>
+  <p class="fragment">But "memory layout" is now a <strong>security property</strong>,
+  not an implementation detail &mdash; and stack canaries, NX, ASLR (Lecture 7) will
+  make sense because you've seen what they defend against.</p>
+  <p class="footnote fragment">Where it continues: pwn.college. Different course.</p>
+  <aside class="notes">
+    Budget this at nine minutes, hard. The room will want to go further — that's what
+    the pointer is for. Do not tumble down the exploitation rabbit hole; it eats the
+    session.
+  </aside>
+</section>
+
+<section class="center">
+  <p class="kicker">Lab B &mdash; 30 minutes</p>
+  <h2>AURA-7 handler signatures</h2>
+  <p class="lead" style="margin-top:1.2em">Take three command handlers from Lecture 3.
+  Recover arity, argument types where visible, return type.</p>
+  <div class="rule" style="margin-top:1.2em">
+    <p style="font-size:0.85em">Required form: <em>"handler 0x12 takes
+    <code>(char *path, int flags)</code> and returns <code>int</code> &mdash; because
+    it reads <code>rdi</code> as a pointer passed to <code>strlen</code>, reads
+    <code>esi</code> and masks it, and <code>rax</code> holds a small integer at
+    <code>ret</code>."</em></p>
+  </div>
+  <p class="fragment">Evidence, then conclusion. Always that order.</p>
+</section>
+
+<section>
+  <p class="kicker">Where the tools fail here</p>
+  <h2>They under-count arguments</h2>
+  <p>A function opens with <code>strlen(rdi)</code>. Strongly recognisable pattern:
+  string function, takes a string. The most likely signature is
+  <code>something f(char *)</code>.</p>
+  <p class="fragment">Meanwhile <code>rsi</code> is read on the third instruction,
+  before anything writes to it.</p>
+  <p class="big bad fragment" style="margin-top:0.8em">There are two arguments.</p>
+</section>
+
+<section>
+  <h2>Not a failure of reading</h2>
+  <div class="rule">
+    <p class="lead">A failure to <strong>keep</strong> reading after finding something
+    familiar.</p>
+  </div>
+  <p class="fragment" style="margin-top:1.2em">And invisible in the output: a
+  plausible one-argument signature looks exactly like a correct one.</p>
+  <p class="fragment">The check is §4 applied <em>deliberately</em> &mdash; for each of
+  <code>rdi rsi rdx rcx r8 r9</code>, in order: read before written?</p>
+  <p class="fragment">Definite answer. Under a minute. The ABI guarantees it's
+  meaningful.</p>
+  <aside class="notes">
+    Falsification Drill. Get the falsifying observation from the room: "if there's a
+    second argument, something reads rsi before writing it." Then check. Record verdict
+    + reason: the model stopped at the first recognisable call.
+  </aside>
+</section>
+
+<section class="center">
+  <h2>Name this pattern now.</h2>
+  <p class="lead" style="margin-top:1.2em"><em>The tool stopped at the first
+  recognisable thing.</em></p>
+  <p class="fragment">You will meet it again in Lectures 6, 8 and 9 &mdash; in
+  different costumes.</p>
+</section>
+
+<section>
+  <h2>Summary</h2>
+  <ul style="font-size:0.78em">
+    <li>A function call is a convention. The ABI was mandatory for the compiler, so
+        it's readable evidence for you</li>
+    <li>The stack is memory; <code>rsp</code> points at the top; it grows down</li>
+    <li><code>call</code> pushes a return address, <code>ret</code> pops it into
+        <code>rip</code>. Nothing marks it special</li>
+    <li>Args <code>rdi rsi rdx rcx r8 r9</code>; return <code>rax</code>; callee-saved
+        <code>rbx rbp r12-r15</code></li>
+    <li><strong>Read before written &rArr; incoming argument.</strong> That's how you
+        recover arity from a stripped function</li>
+    <li>Arity certain, types likely. Record the difference</li>
+    <li>At <code>-O2</code>: no frame pointer, red zone, tail calls. The ABI still holds</li>
+    <li><code>push rbx</code> in a prologue &rarr; a value must survive a coming call</li>
+    <li>Overwriting the saved return address redirects control &mdash; why memory
+        layout is a security property</li>
+    <li>Tools under-count arguments. Check all six registers</li>
+  </ul>
+</section>
+
+<section class="center">
+  <p class="kicker">Next time</p>
+  <h2>Data: pointers, arrays, structs,<br>and recovering types</h2>
+  <p class="dim" style="margin-top:1.4em">Types don't exist in the binary &mdash; only
+  offsets and access sizes. Which turns out to be enough.</p>
+  <p class="footnote">Optional: CS:APP §3.7. Exercise: write a 3-argument function,
+  compile <code>-O0</code> and <code>-O2</code>, find where each argument lives in
+  both.</p>
+</section>
+
+</div></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/5.1.0/reveal.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/5.1.0/plugin/highlight/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/5.1.0/plugin/notes/notes.min.js"></script>
+<script>
+  Reveal.initialize({
+    hash:true, slideNumber:'c/t', transition:'fade', transitionSpeed:'fast',
+    width:1280, height:780, margin:0.07,
+    plugins:[ RevealHighlight, RevealNotes ]
+  });
+</script>
+</body>
+</html>

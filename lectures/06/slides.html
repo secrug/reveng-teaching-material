@@ -1,0 +1,359 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Lecture 6 — Tools: disassembly, decompilation, static analysis</title>
+
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/5.1.0/reveal.min.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/5.1.0/theme/black.min.css" id="theme">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/5.1.0/plugin/highlight/monokai.min.css">
+
+<style>
+  :root { --accent:#ffc857; --dim:#8b949e; --good:#7ee787; --bad:#ff7b72; }
+  .reveal { font-size: 30px; }
+  .reveal h1 { font-size:1.9em; text-transform:none; letter-spacing:-0.01em; }
+  .reveal h2 { font-size:1.35em; text-transform:none; letter-spacing:-0.01em; }
+  .reveal h3 { font-size:1.05em; text-transform:none; color:var(--accent); }
+  .reveal section { text-align:left; }
+  .reveal section.center { text-align:center; }
+  .reveal pre { width:100%; box-shadow:none; font-size:0.62em; }
+  .reveal pre code { padding:1em; border-radius:6px; max-height:620px; }
+  .reveal code:not(pre code){ background:#1c2128; color:var(--accent); padding:1px 7px; border-radius:4px; font-size:0.92em; }
+  .reveal table { font-size:0.72em; }
+  .reveal table th { color:var(--accent); border-bottom:2px solid #30363d; }
+  .reveal table td, .reveal table th { padding:0.35em 0.7em; }
+  .reveal em { color:var(--accent); font-style:italic; }
+  .reveal strong { color:#fff; }
+  .lead { font-size:1.15em; line-height:1.45; }
+  .dim { color:var(--dim); }
+  .good { color:var(--good); }
+  .bad { color:var(--bad); }
+  .big { font-size:1.5em; line-height:1.35; }
+  .kicker { color:var(--accent); font-size:0.6em; letter-spacing:0.16em; text-transform:uppercase; margin-bottom:0.6em; }
+  .rule { border-left:4px solid var(--accent); padding-left:0.9em; }
+  .terminal { background:#0d1117; border:1px solid #30363d; border-radius:6px; padding:0.8em 1em;
+              font-family:monospace; font-size:0.66em; line-height:1.55; white-space:pre; overflow-x:auto; }
+  .two { display:grid; grid-template-columns:1fr 1fr; gap:1.2em; align-items:start; }
+  .three { display:grid; grid-template-columns:1fr 1fr 1fr; gap:1em; align-items:start; }
+  .reveal ul { margin-left:0.4em; }
+  .reveal li { margin-bottom:0.4em; }
+  .footnote { font-size:0.6em; color:var(--dim); margin-top:1.2em; }
+  .reveal .slide-number { font-size:0.5em; }
+  .card { background:#161b22; border:1px solid #30363d; border-radius:8px; padding:0.8em 1em; font-size:0.8em; }
+</style>
+</head>
+<body>
+<div class="reveal"><div class="slides">
+
+<section class="center">
+  <p class="kicker">Reverse Engineering &middot; Lecture 6</p>
+  <h1>Tools: disassembly, decompilation,<br>disciplined static analysis</h1>
+  <p class="dim" style="margin-top:1.4em">Today you get the decompiler.<br>
+  Your first job with it is to catch it lying.</p>
+  <aside class="notes">
+    Ghidra WILL fail to launch on someone's machine. Have the cast and a shared-box
+    Ghidra ready; pair that student up, don't debug a JDK in front of thirty people.
+    This is the thesis session — land the generator/evidence parallel or the course
+    loses its spine.
+  </aside>
+</section>
+
+<section>
+  <h2>Five lectures. One click.</h2>
+  <p>A tool has existed for twenty years that turns assembly into readable C
+  instantly. You've been reading it by hand instead.</p>
+  <p class="lead fragment" style="margin-top:1.3em">Why?</p>
+  <p class="fragment">Because a decompiler produces fluent, plausible, confident
+  output &mdash; and it is sometimes wrong &mdash; and there is no way to tell which
+  parts except by reading the assembly underneath.</p>
+  <div class="rule fragment" style="margin-top:1.2em">
+    <p>Meet it first, and you learn to <em>read</em> its output.<br>
+    Meet it sixth, and you learn to <strong>check</strong> it.</p>
+  </div>
+</section>
+
+<section>
+  <h2>Disassembly is not a lookup</h2>
+  <p>x86 instructions are <strong>1 to 15 bytes</strong>. Start decoding at the wrong
+  offset and you get a valid but entirely different instruction stream.</p>
+  <p class="fragment">There is no marker in the bytes saying "an instruction begins
+  here."</p>
+  <p class="lead fragment" style="margin-top:1.2em">So first you must know
+  <em>where the instructions start</em>.</p>
+</section>
+
+<section>
+  <h2>Two strategies, two failures</h2>
+  <div class="two">
+    <div class="card">
+      <h3>Linear sweep</h3>
+      <p>Decode start to end, one after another. Fast, complete.</p>
+      <p class="bad">Breaks on data inside <code>.text</code> &mdash; a jump table, an
+      inlined constant. Decodes it as instructions, and because lengths vary, may
+      never resynchronise.</p>
+    </div>
+    <div class="card">
+      <h3>Recursive descent</h3>
+      <p>Follow control flow from entry points. Accurate about what is really code.</p>
+      <p class="bad">Lecture 3 gave you the problem: <code>jmp rax</code>. A computed
+      target can't be known, so code beyond it is never reached, never disassembled.</p>
+    </div>
+  </div>
+  <p class="fragment" style="margin-top:1em">Real tools combine both, add heuristics,
+  and do very well.</p>
+</section>
+
+<section class="center">
+  <h2 class="bad">Telling code from data in a stripped<br>binary is <em>undecidable</em>.</h2>
+  <p class="lead fragment" style="margin-top:1.3em">Not difficult. Provably
+  impossible, by reduction to the halting problem.</p>
+  <p class="fragment">Every disassembler you will ever use is making educated guesses.
+  Ghidra guesses very well. <strong>It is still guessing.</strong></p>
+  <p class="fragment dim">Failure mode zero, underneath everything else today.</p>
+</section>
+
+<section>
+  <h2>What a decompiler does</h2>
+  <pre><code class="language-text" data-trim>
+machine code ─▶ disassemble ─▶ lift to IR ─▶ dataflow ─▶ structure ─▶ C-like output
+
+                 (guess          (normalise   (recover     (recover
+                  code/data)      the ISA)     types and    loops,
+                                               variables)   if/else)
+  </code></pre>
+  <ul class="fragment" style="font-size:0.85em">
+    <li><strong>Lift</strong> &mdash; most reliable stage; instruction semantics are well defined</li>
+    <li><strong>Dataflow</strong> &mdash; Lectures 4 and 5, done automatically</li>
+    <li><strong>Structure</strong> &mdash; Lecture 3 in reverse. When the graph doesn't fit,
+        you get <code>goto</code>s</li>
+  </ul>
+</section>
+
+<section class="center">
+  <h2>Now look at that diagram again.</h2>
+  <p class="lead fragment" style="margin-top:1.2em">It is the Lecture 1 compilation
+  pipeline <strong>run backwards</strong>.</p>
+  <p class="lead fragment">And by Lecture 1, the information was
+  <span class="bad">destroyed</span>.</p>
+  <p class="fragment">Every backwards arrow is an inference. The decompiler cannot
+  un-destroy anything. It produces the <em>most likely</em> source consistent with the
+  machine code.</p>
+  <p class="big fragment" style="margin-top:0.8em">Most likely is not actual.</p>
+</section>
+
+<section>
+  <h2>The six failure modes</h2>
+  <ol style="font-size:0.85em">
+    <li><strong>Wrong types</strong> &mdash; <code>int</code> for a pointer, unsigned for
+        signed. Shows up as arithmetic that makes no sense</li>
+    <li class="fragment"><strong>Invented variables</strong> &mdash; <code>uVar3</code>,
+        <code>local_28</code>. Some are real; some are artefacts of how it split registers</li>
+    <li class="fragment"><strong>Dropped side effects</strong> &mdash; a flag set, a global
+        touched. Things that don't fit the C model get silently omitted</li>
+    <li class="fragment"><strong>Mis-structured / mis-bounded loops</strong> &mdash;
+        Lecture 3's off-by-one, now automated</li>
+    <li class="fragment"><strong>Wrong calling convention</strong> &mdash; hand-written asm
+        reads args from the wrong registers. Confident, wrong signature</li>
+    <li class="fragment"><strong>Missed indirect calls</strong> &mdash; <code>call rax</code>
+        has no visible target. Whole regions look unreachable</li>
+  </ol>
+  <p class="fragment lead">This doesn't mean decompilers are bad. It means they are
+  <strong>generators</strong>, and generators are things you verify.</p>
+</section>
+
+<section>
+  <h2>Navigating: do not scroll</h2>
+  <p>A binary has thousands of functions. Reading them in address order is the RE
+  equivalent of reading a dictionary front to back.</p>
+  <p class="fragment">A <strong>cross-reference</strong> records "this location is
+  referred to from these other locations."</p>
+  <div class="terminal fragment" style="margin-top:1em">string "invalid licence"  →  xref  →  the function that prints it
+                              →  xref  →  its two callers
+                                          →  one of them is the check</div>
+  <p class="fragment lead">Under a minute, in a binary you've never seen, without
+  reading anything irrelevant.</p>
+  <p class="fragment footnote">That's triage. Lecture 9 makes a method of it.</p>
+</section>
+
+<section>
+  <h2>Renaming is not tidying up</h2>
+  <p>When you work out that <code>param_1</code> is a <code>char *</code>, tell the
+  tool. Three things happen:</p>
+  <ul>
+    <li class="fragment"><strong>Output improves.</strong> Types propagate.
+        <code>*(int *)(param_1 + 0x18)</code> becomes <code>cfg-&gt;checksum</code>
+        &mdash; everywhere that pointer flows</li>
+    <li class="fragment"><strong>You stop re-deriving.</strong> A named function is a
+        conclusion you don't reach twice</li>
+    <li class="fragment"><strong>Your reasoning becomes reviewable.</strong> The
+        annotations are your hypothesis log &mdash; someone can see what you concluded
+        and disagree</li>
+  </ul>
+</section>
+
+<section class="center">
+  <h2 class="good">You supply the ground truth.<br>The tool does the bookkeeping.</h2>
+  <p class="lead fragment" style="margin-top:1.3em">You determined the struct layout
+  by reading offsets. The tool applies it consistently across ten thousand lines
+  &mdash; work you should never do by hand.</p>
+  <p class="fragment dim">This is also exactly the relationship you want with any
+  assistant.</p>
+</section>
+
+<section>
+  <h2>Now a function</h2>
+  <pre><code class="language-c" data-trim>
+int check_license(char *key) {
+    return 1;
+}
+  </code></pre>
+  <p class="fragment lead" style="margin-top:1.2em">The decompiler is
+  <span class="good">correct</span>. That function does return 1.</p>
+  <p class="fragment">Cross-reference it.</p>
+</section>
+
+<section>
+  <h2>It is called once &mdash; and the result is discarded</h2>
+  <p>The actual validation is <strong>inlined into the caller</strong>: a rolling hash
+  over the key bytes, compared against a value derived from the config.</p>
+  <p class="big bad fragment" style="margin-top:1em"><code>check_license</code> is a decoy.</p>
+  <p class="fragment">The decompiler did not lie. It accurately reported a true
+  property of the bytes.</p>
+  <p class="fragment">Ask a model "how does licensing work here?" and it will read that
+  function and describe it fluently and confidently &mdash; also reporting a true
+  property of the bytes.</p>
+  <p class="lead fragment">Both are wrong about the <em>program</em>, and neither is
+  wrong about the <em>code</em>.</p>
+  <aside class="notes">
+    Scripted wrong turn: YOU start by reading check_license too. "OK so it just returns
+    1, that seems too easy—" then stop. "Wait, who even calls this?" Recover with the
+    xref. Model catching your own pattern-match.
+  </aside>
+</section>
+
+<section class="center">
+  <h2>The missing thing is <em>intent</em>.</h2>
+  <p class="lead fragment" style="margin-top:1.2em">"This function is bait" is not a
+  property of the bytes. It's a property of the whole program in the context of what
+  someone was trying to achieve.</p>
+  <p class="fragment">No amount of local analysis recovers it. It came from noticing
+  the return value went nowhere &mdash; and asking <strong>why would anyone write a
+  function whose result is ignored?</strong></p>
+  <p class="fragment dim">That question doesn't automate, because it isn't a question
+  about code. It's a question about people.</p>
+</section>
+
+<section>
+  <h2>Generators and evidence</h2>
+  <table>
+    <tr><th></th><th>Disassembly + running program</th><th>Decompiler</th><th>Language model</th></tr>
+    <tr><td>What it is</td><td>the bytes; ground truth</td><td>plausible C</td><td>fluent prose</td></tr>
+    <tr><td>Kind of thing</td><td class="good"><strong>evidence</strong></td>
+        <td class="bad"><strong>generator</strong></td><td class="bad"><strong>generator</strong></td></tr>
+    <tr><td>Can be quietly wrong</td><td>no</td><td>yes</td><td>yes</td></tr>
+  </table>
+  <p class="fragment" style="margin-top:1em">The decompiler and the model are the
+  <strong>same species of thing</strong>. Both consume a program and emit a likely
+  interpretation. Both are fast, usually right, and confidently wrong exactly where
+  the program departs from typical.</p>
+</section>
+
+<section class="center">
+  <h2>Run the generators to save time.<br>Check them against evidence.</h2>
+  <p class="lead fragment" style="margin-top:1.3em">The checking is possible
+  <em>only</em> because you can read the evidence.</p>
+  <p class="fragment">Which is what five lectures were for.</p>
+  <div class="rule fragment" style="margin-top:1.3em; text-align:left">
+    <p>A tool that produces confident plausible output is <strong>dangerous</strong> to
+    someone who cannot check it, and <strong>enormously powerful</strong> to someone
+    who can.</p>
+  </div>
+</section>
+
+<section class="center">
+  <p class="kicker">Lab &mdash; 40 + 30 minutes</p>
+  <h2>Build a map, then compare three ways</h2>
+  <p class="lead" style="margin-top:1em"><strong>Core</strong> &mdash; name and comment
+  6 functions of <code>auractl</code>. Navigate by xref, not scrolling.</p>
+  <p class="dim"><strong>Stretch</strong> &mdash; retype 3 functions using your L4/L5
+  recoveries; note where output improved.<br>
+  <strong>Boss</strong> &mdash; find one function where the decompiler is
+  <em>provably wrong</em> and prove it against the disassembly.</p>
+  <p class="fragment lead"><strong>Lab B:</strong> one function, four columns
+  &mdash; disassembly facts | decompiler | model | verdict + evidence.</p>
+</section>
+
+<section>
+  <p class="kicker">Before you leave with the wrong conclusion</p>
+  <h2>The honest counterweight</h2>
+  <p>That decompiler just converted two hundred lines of assembly into readable C in
+  about one second, <strong>correctly</strong>, for roughly 95% of the functions in
+  this binary. By hand that's a day.</p>
+  <p class="fragment">A model will rename forty variables sensibly, summarise a large
+  unfamiliar codebase, recognise a standard algorithm from its constants, and write
+  your tooling script &mdash; faster than anyone in this room.</p>
+  <p class="lead fragment" style="margin-top:1em">These are not consolation prizes.
+  Refusing to use them is not rigour. It's waste.</p>
+  <aside class="notes">
+    Mandatory, not optional. A room that concludes "AI bad, hand-reading good" has
+    misunderstood as badly as one that concludes "AI solves everything." The lesson is
+    calibration, not rejection.
+  </aside>
+</section>
+
+<section class="center">
+  <h2>The claim is narrow:</h2>
+  <p class="big" style="margin-top:1.2em">the last 5% is where<br>the answer usually hides.</p>
+  <p class="lead fragment" style="margin-top:1.2em">The decoy, the custom constant, the
+  misread signedness, the dropped padding &mdash; these are not evenly distributed.</p>
+  <p class="fragment">They cluster exactly where someone was doing something
+  interesting. Which is exactly where you are looking.</p>
+  <p class="lead fragment good" style="margin-top:1em">Use the tools for the 95%.<br>
+  Be the person who handles the 5%.</p>
+</section>
+
+<section>
+  <h2>Summary</h2>
+  <ul style="font-size:0.78em">
+    <li>Code vs data in a stripped binary is undecidable. Every disassembler guesses, well</li>
+    <li>Linear sweep desynchronises on embedded data; recursive descent misses
+        everything behind an indirect jump</li>
+    <li>A decompiler is the compilation pipeline backwards &mdash; every arrow an
+        inference over destroyed information</li>
+    <li>Six failure modes: types, invented variables, dropped side effects, loop
+        structure, calling convention, indirect calls</li>
+    <li>Navigate by cross-reference. Start from a string or an import</li>
+    <li>Renaming records hypotheses, improves output, makes reasoning reviewable</li>
+    <li>Neither tool can represent <strong>intent</strong>. A decoy is a true fact about
+        the bytes and a lie about the program</li>
+    <li>Decompiler and model are <strong>generators</strong>; the bytes are
+        <strong>evidence</strong></li>
+    <li>The tools are excellent for ~95%. The remaining 5% is where the answer is</li>
+  </ul>
+</section>
+
+<section class="center">
+  <p class="kicker">Next time</p>
+  <h2>Dynamic analysis:<br>running it and watching it</h2>
+  <p class="dim" style="margin-top:1.4em">Static analysis tells you what a program
+  <em>can</em> do. A debugger tells you what it <em>does</em>.</p>
+  <p class="footnote">Take reference card #4 (gdb). Optional: <em>The Ghidra Book</em>
+  ch. 1&ndash;5. Exercise: decompile something <strong>you wrote</strong> and find the
+  first thing Ghidra gets wrong.</p>
+</section>
+
+</div></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/5.1.0/reveal.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/5.1.0/plugin/highlight/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/5.1.0/plugin/notes/notes.min.js"></script>
+<script>
+  Reveal.initialize({
+    hash:true, slideNumber:'c/t', transition:'fade', transitionSpeed:'fast',
+    width:1280, height:780, margin:0.07,
+    plugins:[ RevealHighlight, RevealNotes ]
+  });
+</script>
+</body>
+</html>

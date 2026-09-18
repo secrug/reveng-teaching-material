@@ -1,0 +1,400 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Lecture 5 — Data: pointers, arrays, structs, type recovery</title>
+
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/5.1.0/reveal.min.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/5.1.0/theme/black.min.css" id="theme">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/5.1.0/plugin/highlight/monokai.min.css">
+
+<style>
+  :root { --accent:#ffc857; --dim:#8b949e; --good:#7ee787; --bad:#ff7b72; }
+  .reveal { font-size: 30px; }
+  .reveal h1 { font-size:1.9em; text-transform:none; letter-spacing:-0.01em; }
+  .reveal h2 { font-size:1.35em; text-transform:none; letter-spacing:-0.01em; }
+  .reveal h3 { font-size:1.05em; text-transform:none; color:var(--accent); }
+  .reveal section { text-align:left; }
+  .reveal section.center { text-align:center; }
+  .reveal pre { width:100%; box-shadow:none; font-size:0.62em; }
+  .reveal pre code { padding:1em; border-radius:6px; max-height:620px; }
+  .reveal code:not(pre code){ background:#1c2128; color:var(--accent); padding:1px 7px; border-radius:4px; font-size:0.92em; }
+  .reveal table { font-size:0.72em; }
+  .reveal table th { color:var(--accent); border-bottom:2px solid #30363d; }
+  .reveal table td, .reveal table th { padding:0.35em 0.7em; }
+  .reveal em { color:var(--accent); font-style:italic; }
+  .reveal strong { color:#fff; }
+  .lead { font-size:1.15em; line-height:1.45; }
+  .dim { color:var(--dim); }
+  .good { color:var(--good); }
+  .bad { color:var(--bad); }
+  .big { font-size:1.5em; line-height:1.35; }
+  .kicker { color:var(--accent); font-size:0.6em; letter-spacing:0.16em; text-transform:uppercase; margin-bottom:0.6em; }
+  .rule { border-left:4px solid var(--accent); padding-left:0.9em; }
+  .terminal { background:#0d1117; border:1px solid #30363d; border-radius:6px; padding:0.8em 1em;
+              font-family:monospace; font-size:0.66em; line-height:1.55; white-space:pre; overflow-x:auto; }
+  .two { display:grid; grid-template-columns:1fr 1fr; gap:1.2em; align-items:start; }
+  .reveal ul { margin-left:0.4em; }
+  .reveal li { margin-bottom:0.4em; }
+  .footnote { font-size:0.6em; color:var(--dim); margin-top:1.2em; }
+  .reveal .slide-number { font-size:0.5em; }
+  .pad { color:#ff7b72; }
+</style>
+</head>
+<body>
+<div class="reveal"><div class="slides">
+
+<section class="center">
+  <p class="kicker">Reverse Engineering &middot; Lecture 5</p>
+  <h1>Data: pointers, arrays, structs,<br>and recovering types</h1>
+  <p class="dim" style="margin-top:1.4em">Types don't exist in the binary. Offsets and
+  access widths do &mdash; and that turns out to be enough.</p>
+  <aside class="notes">
+    Warm-up: the *8 in [rdi+rsi*8], which register holds arg 3, what push rbx implies,
+    an AURA-7 handler arity, read-before-write. Q1 is the bridge — the scale field was
+    flagged in L2 and L4 as "you'll use this later". Later is now.
+  </aside>
+</section>
+
+<section>
+  <h2>The problem, stated honestly</h2>
+  <p>What exists in compiled code: <strong>an address, an access width, an
+  operation</strong>.</p>
+  <p class="fragment">What does not exist: any record that a particular eight bytes
+  was a <code>double</code>, a <code>long</code>, a pointer to a struct, or three
+  separate things.</p>
+  <p class="lead fragment" style="margin-top:1.2em">And yet type information is
+  recoverable &mdash; often precisely.</p>
+  <div class="rule fragment">
+    <p>Because the compiler, having erased the types, still had to generate code that
+    <em>respects</em> them.</p>
+  </div>
+</section>
+
+<section class="center">
+  <h2 class="good">Type recovery is inference from a<br>consistency the compiler could not avoid.</h2>
+  <p class="lead fragment" style="margin-top:1.3em">Every access encodes its width.
+  Every array index encodes the element size. Every field access encodes its offset.</p>
+  <p class="fragment">The hardware demands alignment, so the compiler inserts padding
+  &mdash; and the padding is visible in the offsets.</p>
+</section>
+
+<section>
+  <h2>Arrays: the scale field</h2>
+  <pre><code class="language-asm" data-trim>
+mov eax, DWORD PTR [rdi + rsi*4]     ; array of 4-byte things
+mov rax, QWORD PTR [rdi + rsi*8]     ; array of 8-byte things — or POINTERS
+  </code></pre>
+  <p class="fragment"><em>Variable</em> index &times; scale &rarr; array indexing.
+  The scale <strong>is</strong> the element size.</p>
+  <p class="fragment">If the loaded 8-byte value is then used as an address, it was an
+  array of pointers.</p>
+  <div class="rule fragment" style="margin-top:1.2em">
+    <p>Pointer arithmetic in C is in units of the pointed-to type. In assembly it's in
+    <strong>bytes</strong>. <code>p+1</code> where <code>p</code> is <code>int*</code>
+    compiles to <code>p+4</code>.</p>
+  </div>
+  <p class="fragment footnote">A pointer incremented by 8 in a loop is walking an array
+  of 8-byte things.</p>
+</section>
+
+<section>
+  <h2>Structs: constant offsets</h2>
+  <pre><code class="language-asm" data-trim>
+mov   eax, DWORD PTR [rdi]         ; field at +0,  4 bytes
+mov   rcx, QWORD PTR [rdi+0x8]     ; field at +8,  8 bytes
+movzx edx, BYTE  PTR [rdi+0x10]    ; field at +16, 1 byte
+  </code></pre>
+  <div class="two fragment" style="margin-top:1em">
+    <div><p><code>[rdi + rsi*4]</code><br><span class="dim">index changes at runtime</span><br>
+      <strong class="good">&rarr; array</strong></p></div>
+    <div><p><code>[rdi + 8]</code><br><span class="dim">offset fixed at compile time</span><br>
+      <strong class="good">&rarr; struct field</strong></p></div>
+  </div>
+  <p class="fragment footnote">Strong signal, not a proof &mdash; <code>arr[2]</code>
+  also compiles to a fixed offset. Different offsets with different widths is a
+  struct; a fixed offset with a varying base in a loop is an array element.</p>
+</section>
+
+<section>
+  <h2>Now count the bytes</h2>
+  <pre><code class="language-c" data-trim>
+struct T {
+    int  a;
+    char b;
+    int  c;
+};
+  </code></pre>
+  <p class="fragment">Naively: 4 + 1 + 4 = <strong>9 bytes</strong>.</p>
+  <p class="fragment">Compile it and read the offsets:</p>
+  <pre class="fragment"><code class="language-text" data-trim>
+a → +0
+b → +4
+c → +8        ← not +5
+  </code></pre>
+</section>
+
+<section>
+  <h2>Padding</h2>
+  <pre><code class="language-text" data-trim>
+ offset:  0  1  2  3 | 4 | 5  6  7 | 8  9 10 11
+ field:  [    a     ]|[b]|[ PAD  ]|[    c     ]
+  </code></pre>
+  <p class="fragment">The hardware prefers &mdash; on some architectures requires
+  &mdash; that a 4-byte value sit at an address divisible by 4. Offset 5 would
+  misalign <code>c</code>, so the compiler skips to 8.</p>
+  <ul class="fragment">
+    <li>Each member sits at an offset divisible by its own alignment</li>
+    <li>Total size rounds up to a multiple of the <em>largest</em> member's alignment
+        &mdash; so arrays of the struct stay aligned</li>
+  </ul>
+  <p class="big good fragment"><code>sizeof(struct T) == 12</code></p>
+</section>
+
+<section>
+  <h2>Why this matters twice</h2>
+  <p><strong>1. It's the key to reconstructing correctly.</strong></p>
+  <p style="font-size:0.9em">Offsets 0, 4, 8 &rarr; <code>int; char; int;</code>
+  &check;<br>
+  Write <code>int; char; char; char; int;</code> and you have four fields where there
+  were three. <em>Padding is not a field. It is absence.</em></p>
+  <p class="fragment" style="margin-top:1.2em"><strong>2. It is invisible in the
+  source and visible in the binary.</strong></p>
+  <p class="fragment" style="font-size:0.9em">Almost everything else in this course is
+  information the source <em>had</em> and the binary <em>lost</em>. Padding is the
+  reverse. The programmer never wrote it, never saw it, may not know it exists.</p>
+  <p class="fragment dim">That asymmetry has a consequence. We come back to it.</p>
+</section>
+
+<section>
+  <h2>Arrays of structs</h2>
+  <pre><code class="language-asm" data-trim>
+mov eax, DWORD PTR [rdi + rsi*24 + 0x8]
+  </code></pre>
+  <p class="fragment">Base <code>rdi</code>, element size <strong>24</strong>, index
+  <code>rsi</code>, field at offset <strong>8</strong> within the element.</p>
+  <p class="big good fragment"><code>arr[i].field</code></p>
+  <p class="fragment">The stride is the struct's <code>sizeof</code>,
+  <em>including padding</em>. A stride of 24 for fields summing to 20 tells you
+  there are 4 bytes of padding &mdash; before you've identified a single field.</p>
+  <p class="fragment footnote">Scales are limited to 1, 2, 4, 8. A 24-byte stride
+  can't be encoded, so you'll see <code>imul rax, rsi, 24</code> first &mdash; the
+  compiler stating the element size outright.</p>
+</section>
+
+<section>
+  <h2>Sometimes you cannot tell</h2>
+  <pre><code class="language-asm" data-trim>
+mov rax, QWORD PTR [rdi]
+mov rcx, QWORD PTR [rdi+8]
+  </code></pre>
+  <pre class="fragment"><code class="language-c" data-trim>
+struct A { long x;   long y;    };
+struct B { long x;   void *p;   };
+struct C { double d; long n;    };
+struct D { char *s;  size_t len; };
+  </code></pre>
+  <p class="fragment">The binary genuinely <strong>underdetermines</strong> the type
+  here.</p>
+</section>
+
+<section>
+  <h2>The correct output is not a guess</h2>
+  <p>It's a <strong>candidate set</strong> plus the observation that would
+  discriminate:</p>
+  <ul>
+    <li class="fragment"><code>[rdi+8]</code> later dereferenced &rarr; pointer.
+        Kills <code>A</code>, <code>C</code></li>
+    <li class="fragment">Loaded with <code>movsd</code> &rarr; floating point.
+        Selects <code>C</code></li>
+    <li class="fragment"><code>[rdi]</code> passed to <code>strlen</code> &rarr;
+        <code>char *</code>. Selects <code>D</code></li>
+    <li class="fragment">Compared to a small int, used as a loop bound &rarr; a count</li>
+  </ul>
+  <div class="rule fragment" style="margin-top:1em">
+    <p class="lead">"I don't know yet, but a float load at +0 would settle it" beats a
+    confident wrong answer &mdash; and tells you exactly what to go and look for.</p>
+  </div>
+  <aside class="notes">
+    Praise this loudly when a student does it. The discomfort of not having one right
+    answer IS the lesson.
+  </aside>
+</section>
+
+<section>
+  <h2>Where data lives</h2>
+  <table>
+    <tr><th>Region</th><th>Address</th><th>What it implies</th></tr>
+    <tr><td><code>.rodata</code></td><td>fixed, low</td><td>Constants, literals. <strong>Nothing writes here</strong></td></tr>
+    <tr><td><code>.data</code></td><td>fixed, low</td><td>Initialised globals</td></tr>
+    <tr><td><code>.bss</code></td><td>fixed, low</td><td>Zero-init globals. <em>No space in the file</em></td></tr>
+    <tr><td>stack</td><td>high, near <code>rsp</code></td><td>Locals. Lifetime = the call</td></tr>
+    <tr><td>heap</td><td>middle, from <code>malloc</code></td><td>Explicit lifetime. Someone must free it</td></tr>
+  </table>
+  <p class="fragment" style="margin-top:0.8em">A pointer into <code>.rodata</code> is
+  never written through &mdash; see a write, and your identification is wrong. A stack
+  pointer dies when the function returns.</p>
+  <p class="fragment footnote">A 10 MB zero-init global adds 10 MB of memory and
+  <em>nothing</em> to the file. The file just records "reserve this much, zeroed".</p>
+</section>
+
+<section>
+  <h2>The heap has a shape</h2>
+  <pre><code class="language-asm" data-trim data-line-numbers="1-2|3|6">
+    mov  edi, 0x20                  ; 32 bytes
+    call malloc
+    mov  QWORD PTR [rbp-0x8], rax   ; keep the pointer
+    ...
+    mov  rdi, QWORD PTR [rbp-0x8]
+    call free
+  </code></pre>
+  <p class="fragment">The size passed to <code>malloc</code> is frequently a struct's
+  <code>sizeof</code> &mdash; <strong>total size, padding included</strong>, before
+  you've found any fields.</p>
+  <p class="fragment">Computed size (<code>imul rdi, rsi, 24</code>) &rarr; an array
+  allocation, and the multiplier is the element size.</p>
+</section>
+
+<section>
+  <h2>Recovering a struct: the method</h2>
+  <ol>
+    <li>Record every <code>(offset, width)</code> accessed through the base pointer</li>
+    <li class="fragment">Sort by offset. Gaps too small for a field are <strong>padding</strong></li>
+    <li class="fragment">Infer each type from width + how it's used</li>
+    <li class="fragment">Check total size against an array stride or the
+        <code>malloc</code> argument</li>
+    <li class="fragment"><strong class="good">Prove it.</strong></li>
+  </ol>
+  <p class="lead fragment" style="margin-top:1em">Step 5 is what separates this from
+  guessing.</p>
+</section>
+
+<section>
+  <h2>AURA-7's config struct</h2>
+  <pre><code class="language-c" data-trim data-line-numbers="8-10">
+struct aura_config {
+    uint32_t magic;         // +0
+    uint16_t version;       // +4
+    uint16_t flags;         // +6
+    char    *device_path;   // +8    (8-byte aligned)
+    uint32_t timeout_ms;    // +16
+    uint8_t  mode;          // +20
+    // 3 bytes padding         +21..23
+    uint32_t checksum;      // +24
+};                          // sizeof = 28
+  </code></pre>
+  <p class="fragment"><code>checksum</code> at <strong>24</strong>, not 21. The
+  <code>uint8_t</code> at +20 is followed by three bytes of padding so the 4-byte
+  field lands on a multiple of 4.</p>
+</section>
+
+<section class="center">
+  <h2>Write those bytes into a file.<br>Does <code>auractl</code> accept it?</h2>
+  <p class="lead fragment" style="margin-top:1.3em">If yes &mdash; <span class="good">that
+  is proof</span>.</p>
+  <p class="lead fragment">If no &mdash; the layout is wrong, or there's a checksum, or
+  you misidentified a field. <em>You learned that too.</em></p>
+  <p class="fragment dim">Everything before step 5 was a hypothesis with good evidence
+  behind it. That is a different and lesser thing.</p>
+</section>
+
+<section class="center">
+  <p class="kicker">Lab &mdash; 40 + 30 minutes</p>
+  <h2>Reading data, then proving it</h2>
+  <p class="lead" style="margin-top:1em"><strong>Core</strong> &mdash; three functions
+  walking data structures. Array or struct? Element/field sizes? Draw the layout.</p>
+  <p class="dim"><strong>Stretch</strong> &mdash; reconstruct one struct with padding;
+  compute <code>sizeof</code>; verify in gdb.<br>
+  <strong>Boss</strong> &mdash; the ambiguous access. Produce the candidate set and the
+  discriminating observation for each.</p>
+  <p class="fragment lead"><strong>Lab B:</strong> hand-craft a config file that
+  <code>auractl</code> accepts.</p>
+  <aside class="notes">
+    The checksum will probably block full acceptance — that's the planned L1 open
+    question, closed in L9. Make sure they RECORD it rather than grinding. Managing an
+    open question is itself an L9 skill previewed here.
+  </aside>
+</section>
+
+<section>
+  <p class="kicker">Predict the failure before you look</p>
+  <h2>Struct recovery is the clearest blind spot</h2>
+  <p>Padding is invisible in the source. Every C tutorial, every codebase, every
+  textbook shows structs as a list of fields with <strong>nothing between them</strong>.</p>
+  <p class="fragment">A tool that has learned what structs look like has learned the
+  <em>source</em> form &mdash; where <code>mode</code> is immediately followed by
+  <code>checksum</code>.</p>
+</section>
+
+<section>
+  <h2>So the systematic error is arithmetic</h2>
+  <div class="terminal">magic(4) + version(2) + flags(2) + device_path(8)
+      + timeout_ms(4) + mode(1)  =  21
+
+      → checksum at offset 21</div>
+  <p class="big bad fragment" style="margin-top:1em">The binary says 24.</p>
+  <p class="fragment">The check is immediate: find the instruction that accesses the
+  field and read the offset off it. <code>[rdi+0x18]</code> is 24.</p>
+  <p class="fragment lead">That is not an inference. It is a number in an instruction.</p>
+  <aside class="notes">
+    Falsification Drill. Call this one BEFORE running it — predict the error, then
+    demonstrate it. Record on the scoreboard as SYSTEMATIC, not bad luck.
+  </aside>
+</section>
+
+<section>
+  <h2>Note the direction of the asymmetry</h2>
+  <p>Usually a tool fails because information was <strong>destroyed</strong> and it had
+  to guess.</p>
+  <p class="lead fragment" style="margin-top:1.2em">Here, information the source
+  <em>never contained</em> is sitting in plain view in the binary &mdash; and the tool
+  misses it because its model of "what a struct looks like" comes from the source.</p>
+  <p class="fragment dim">Predicting a specific failure before you look is the
+  practical form of understanding a tool's limits. You'll do this repeatedly from now
+  on.</p>
+</section>
+
+<section>
+  <h2>Summary</h2>
+  <ul style="font-size:0.78em">
+    <li>Types don't exist in the binary. Offsets and widths do, and they're enough</li>
+    <li>Variable index &times; scale &rarr; array; the scale is the element size</li>
+    <li>Constant displacement &rarr; struct field, usually</li>
+    <li>Padding aligns members; size rounds up to the largest member's alignment.
+        <strong><code>sizeof</code> is not the sum of the fields</strong></li>
+    <li>Padding is invisible in source, visible in the binary</li>
+    <li>Array-of-struct stride = full size incl. padding. <code>imul rsi, 24</code>
+        states it outright</li>
+    <li>When underdetermined: candidate set + discriminating observation</li>
+    <li>Where a pointer points constrains what it can be</li>
+    <li><code>malloc</code>'s argument often gives you the struct size for free</li>
+    <li>A recovered struct is a hypothesis until you make the program act on it</li>
+    <li>The systematic tool error is <strong>dropped padding</strong>. Predict it</li>
+  </ul>
+</section>
+
+<section class="center">
+  <p class="kicker">Next time</p>
+  <h2>Tools: disassembly, decompilation,<br>disciplined static analysis</h2>
+  <p class="dim" style="margin-top:1.4em">You've done the decompiler's job by hand for
+  five lectures. Next week you get the decompiler &mdash; and your first job with it is
+  to catch it lying.</p>
+  <p class="footnote">Optional: CS:APP §3.8&ndash;3.9. Exercise: three structs with
+  deliberate padding &mdash; predict each <code>sizeof</code>, then check.</p>
+</section>
+
+</div></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/5.1.0/reveal.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/5.1.0/plugin/highlight/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/5.1.0/plugin/notes/notes.min.js"></script>
+<script>
+  Reveal.initialize({
+    hash:true, slideNumber:'c/t', transition:'fade', transitionSpeed:'fast',
+    width:1280, height:780, margin:0.07,
+    plugins:[ RevealHighlight, RevealNotes ]
+  });
+</script>
+</body>
+</html>

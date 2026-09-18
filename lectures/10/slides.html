@@ -1,0 +1,273 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Lecture 10 — Capstone: humans, machines, and a target nobody has seen</title>
+
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/5.1.0/reveal.min.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/5.1.0/theme/black.min.css" id="theme">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/5.1.0/plugin/highlight/monokai.min.css">
+
+<style>
+  :root { --accent:#ffc857; --dim:#8b949e; --good:#7ee787; --bad:#ff7b72; }
+  .reveal { font-size: 30px; }
+  .reveal h1 { font-size:1.9em; text-transform:none; letter-spacing:-0.01em; }
+  .reveal h2 { font-size:1.35em; text-transform:none; letter-spacing:-0.01em; }
+  .reveal h3 { font-size:1.05em; text-transform:none; color:var(--accent); }
+  .reveal section { text-align:left; }
+  .reveal section.center { text-align:center; }
+  .reveal pre { width:100%; box-shadow:none; font-size:0.62em; }
+  .reveal pre code { padding:1em; border-radius:6px; max-height:620px; }
+  .reveal code:not(pre code){ background:#1c2128; color:var(--accent); padding:1px 7px; border-radius:4px; font-size:0.92em; }
+  .reveal table { font-size:0.66em; }
+  .reveal table th { color:var(--accent); border-bottom:2px solid #30363d; }
+  .reveal table td, .reveal table th { padding:0.3em 0.6em; }
+  .reveal em { color:var(--accent); font-style:italic; }
+  .reveal strong { color:#fff; }
+  .lead { font-size:1.15em; line-height:1.45; }
+  .dim { color:var(--dim); }
+  .good { color:var(--good); }
+  .bad { color:var(--bad); }
+  .big { font-size:1.5em; line-height:1.35; }
+  .kicker { color:var(--accent); font-size:0.6em; letter-spacing:0.16em; text-transform:uppercase; margin-bottom:0.6em; }
+  .rule { border-left:4px solid var(--accent); padding-left:0.9em; }
+  .terminal { background:#0d1117; border:1px solid #30363d; border-radius:6px; padding:0.8em 1em;
+              font-family:monospace; font-size:0.66em; line-height:1.55; white-space:pre; overflow-x:auto; }
+  .two { display:grid; grid-template-columns:1fr 1fr; gap:1.2em; align-items:start; }
+  .three { display:grid; grid-template-columns:1fr 1fr 1fr; gap:1em; align-items:stretch; }
+  .reveal ul { margin-left:0.4em; }
+  .reveal li { margin-bottom:0.4em; }
+  .footnote { font-size:0.6em; color:var(--dim); margin-top:1.2em; }
+  .reveal .slide-number { font-size:0.5em; }
+  .card { background:#161b22; border:1px solid #30363d; border-radius:8px; padding:0.8em 1em; font-size:0.8em; }
+</style>
+</head>
+<body>
+<div class="reveal"><div class="slides">
+
+<section class="center">
+  <p class="kicker">Reverse Engineering &middot; Lecture 10 &middot; Capstone</p>
+  <h1>Humans, machines,<br>and a target nobody has seen</h1>
+  <p class="dim" style="margin-top:1.4em">Today you prove the thesis on yourselves.</p>
+  <aside class="notes">
+    The race must be genuinely enforced, especially Table B — seat a TA there. Don't
+    let "who won" swamp "how each failed" — guard the 35-min debrief. End on earned
+    confidence, not fear: the exit state is "AI is powerful and I can wield it because I
+    can check it."
+  </aside>
+</section>
+
+<section>
+  <h2>The scoreboard, read as evidence</h2>
+  <table>
+    <tr><th>L</th><th>What the model got wrong</th><th>The underlying reason</th></tr>
+    <tr><td>1</td><td>invented behaviour from strings</td><td>pattern-matched a format string into a story</td></tr>
+    <tr><td>2</td><td>a register value after a 32-bit write</td><td>missed an arbitrary ISA rule</td></tr>
+    <tr><td>3</td><td>a loop bound, off by one</td><td>the <em>common</em> loop, not this one</td></tr>
+    <tr><td>4</td><td>missed a function argument</td><td>stopped at the first recognisable call</td></tr>
+    <tr><td>5</td><td>a struct field offset</td><td>summed sizes; padding invisible in source</td></tr>
+    <tr><td>6</td><td>narrated a decoy function</td><td>cannot model intent, only bytes</td></tr>
+    <tr><td>7</td><td>a subtly broken gdb script</td><td>tooling 90% right, one detail wrong</td></tr>
+    <tr><td>8</td><td>hook a <code>strcmp</code> that isn't called</td><td>textbook answer, not this binary</td></tr>
+    <tr><td>9</td><td>the wrong licence constant</td><td>right genre, wrong specifics</td></tr>
+  </table>
+  <aside class="notes">
+    Warm-up: put it on screen, read it together, let the room reconstruct each failure.
+    Then ask: what's the pattern across all nine? Guide them to slide 3.
+  </aside>
+</section>
+
+<section class="center">
+  <h2>The same failure, nine times,<br>in different clothing.</h2>
+  <p class="lead fragment" style="margin-top:1.2em">Every time, the model produced the
+  <strong>statistically likely</strong> answer.</p>
+  <p class="lead fragment">Every time, it broke where the binary <strong>departed from
+  likely</strong> &mdash; the arbitrary rule, the padding, the decoy, the custom
+  constant, the exact offset.</p>
+  <p class="lead fragment">Every time, it was caught with <span class="good">evidence</span>
+  a student could read because they'd built the skill by hand.</p>
+  <p class="big fragment good" style="margin-top:0.8em">One law, observed nine times.<br>
+  And you derived it yourselves.</p>
+</section>
+
+<section>
+  <h2>Where these skills go</h2>
+  <ul style="font-size:0.85em">
+    <li><strong>Vulnerability research</strong> &mdash; bugs in software you have no
+        source to. The Lecture 4 return-address moment was a keyhole into this</li>
+    <li><strong>Malware analysis</strong> &mdash; understanding hostile code, in isolated
+        monitored environments</li>
+    <li><strong>Firmware / embedded / IoT</strong> &mdash; AURA-7's whole premise. No
+        symbols, odd architectures, physical devices</li>
+    <li><strong>Interoperability &amp; preservation</strong> &mdash; undocumented formats
+        and protocols; keeping old software alive. Often the most clearly lawful face</li>
+    <li><strong>Anti-cheat, DRM, licensing</strong> &mdash; the AURA-7 thread, as an
+        industry, on both sides</li>
+    <li><strong>Compliance &amp; audit</strong> &mdash; verifying a vendor's binary does
+        what they claim</li>
+  </ul>
+</section>
+
+<section>
+  <h2>The law, and the ethics</h2>
+  <p>Everything this semester was done to binaries this course made, for learning.
+  <strong>That is the safe square.</strong> Outside it, the ground is real.</p>
+  <ul style="font-size:0.85em">
+    <li class="fragment"><strong>It varies by jurisdiction.</strong> EU: interoperability
+        permitted under conditions. US: DMCA restricts circumvention, with shifting
+        research/interop exceptions. And the licence you clicked can forbid what statute
+        allows. <em>Not legal advice &mdash; a map of the landmines.</em></li>
+    <li class="fragment"><strong>Responsible disclosure.</strong> Find a real bug? Tell
+        the vendor, give them time, coordinate. A professional norm</li>
+    <li class="fragment"><strong>The bright line.</strong> A lab binary is not someone's
+        production server. <span class="bad">Skill is not permission.</span></li>
+  </ul>
+</section>
+
+<section>
+  <h2>The honest ledger</h2>
+  <table>
+    <tr><th class="good">Genuinely excels at</th><th class="bad">Reliably fails at</th></tr>
+    <tr><td>bulk renaming, first-pass annotation</td><td>exact offsets, padding, alignment</td></tr>
+    <tr><td>recognising <em>known</em> algorithms fast</td><td>this binary's specific constants</td></tr>
+    <tr><td>writing tooling scaffolds (you then fix)</td><td>arbitrary ISA and ABI rules</td></tr>
+    <tr><td>summarising large code you'd skim</td><td>modelling intent &mdash; decoys, traps</td></tr>
+    <tr><td>suggesting hypotheses to test</td><td>deciding what's worth looking at</td></tr>
+    <tr><td>explaining a technique you looked up</td><td>admitting when it doesn't know</td></tr>
+  </table>
+  <p class="fragment lead" style="margin-top:0.8em">The left column is a large
+  multiplier. Using all of it is correct, not lazy.</p>
+</section>
+
+<section class="center">
+  <h2>The left is acceleration.<br>The right is the job.</h2>
+  <p class="lead fragment" style="margin-top:1.3em">You can only tell which is which
+  &mdash; harvest the left, catch the right &mdash; if you have the fundamentals.</p>
+  <p class="fragment">The person who cannot read a stack frame cannot safely use either
+  column.</p>
+  <p class="big good fragment">You can. That is what changed this semester.</p>
+</section>
+
+<section class="center">
+  <p class="kicker">The race &mdash; 75 minutes</p>
+  <h2>A binary nobody has seen</h2>
+  <div class="three" style="margin-top:1.2em">
+    <div class="card"><h3>Table A</h3><p><strong>No AI.</strong> Tools, notes, your own
+      reading.</p></div>
+    <div class="card"><h3>Table B</h3><p><strong>AI only.</strong> Relay its instructions,
+      type what it says. No independent reasoning. You are its hands.</p></div>
+    <div class="card"><h3>Table C</h3><p><strong>Human + AI.</strong> Anything goes. The
+      realistic mode.</p></div>
+  </div>
+  <p class="fragment" style="margin-top:1em">Recover the licence algorithm, produce one
+  valid key. First verified key wins; best hypothesis log wins if nobody finishes.</p>
+</section>
+
+<section class="center">
+  <h2>Table B's constraint is artificial<br>on purpose.</h2>
+  <p class="lead" style="margin-top:1.2em">It isolates one question: <em>what does pure
+  delegation, with no independent judgement behind it, actually get you?</em></p>
+  <p class="lead fragment">You won't take the answer on faith. You'll watch it happen at
+  your own table.</p>
+  <div class="rule fragment" style="margin-top:1.3em; text-align:left">
+    <p>The prediction: Table B has the fastest first ten minutes in the room &mdash; then
+    hits a wall it cannot climb, because climbing it needs exactly the thing that table
+    gave up. <strong>Remember how that feels.</strong></p>
+  </div>
+</section>
+
+<section>
+  <p class="kicker">Debrief &mdash; 35 minutes &middot; the actual point</p>
+  <h2>Not who won. How each table <em>failed</em>.</h2>
+  <div class="three" style="margin-top:1em">
+    <div class="card"><h3>Table B</h3><p>Fastest start. Stalled &mdash; wrong algorithm,
+      or narrated the decoy &mdash; and, forbidden to reason, re-prompted into the same
+      wrong answer. <strong>Couldn't tell it was wrong.</strong></p></div>
+    <div class="card"><h3>Table A</h3><p>Slow, solid. Every step understood, no time lost
+      to misplaced trust. No acceleration on the dull parts.</p></div>
+    <div class="card"><h3>Table C</h3><p>Fast <em>and</em> recovered at the wall &mdash;
+      the same wall &mdash; because they could read the evidence and knew to overrule.</p></div>
+  </div>
+  <p class="fragment lead" style="margin-top:1em">Table C is not "AI plus vibes". It's
+  "AI plus someone who can catch it". <strong>The catching is the entire skill.</strong></p>
+  <aside class="notes">
+    Run Table B's questions first: where did you get stuck? what did you do when it was
+    wrong? could you tell? If AI-only unexpectedly finishes, do NOT fake a stall — run the
+    honest "the wall moved" debrief. Course credibility is honesty about the tools.
+  </aside>
+</section>
+
+<section class="center">
+  <p class="kicker">Lecture 1 asked you to take this on trust</p>
+  <h2 style="line-height:1.3">AI moved the bottleneck from<br>
+  <em>"can you read assembly"</em> to<br>
+  <em>"do you know what to ask, and can<br>you tell when the answer is wrong."</em></h2>
+  <p class="lead fragment" style="margin-top:1em">Table B couldn't tell. Table C could.</p>
+  <p class="fragment">Now you have the evidence &mdash; and you generated all of it.</p>
+</section>
+
+<section>
+  <h2>The tools will keep improving</h2>
+  <p>The wall will move. The class of binary that defeats pure delegation will get
+  narrower and stranger.</p>
+  <p class="lead fragment" style="margin-top:1.2em">But the <strong>method</strong> for
+  finding the wall does not change. And the ability to read the evidence when you reach
+  it does not go out of date.</p>
+  <p class="fragment">When the tool is right, that ability lets you move fast.<br>
+  When it's wrong, it's the only thing between you and a confident, plausible, wrong
+  answer.</p>
+</section>
+
+<section class="center">
+  <h2 class="good">That is the job now.</h2>
+  <p class="lead" style="margin-top:1.2em">Not doing the reverse engineering by hand
+  &mdash; directing the machine that does most of it, and knowing, from evidence, when
+  it is lying.</p>
+  <p class="big fragment" style="margin-top:1em">And you can only direct<br>what you
+  understand.</p>
+</section>
+
+<section>
+  <h2>Where to go next</h2>
+  <ul>
+    <li><strong>crackmes.one</strong> past difficulty 3; <strong>pwn.college</strong> if
+        the security side pulled at you</li>
+    <li><strong>CTF competitions</strong>, rev and pwn categories &mdash; the fastest way
+        to get good is a team that does this weekly</li>
+    <li><strong>The fields</strong> from earlier, if one is where you want to end up. Read
+        one real write-up in it</li>
+    <li class="fragment good"><strong>The one habit worth keeping forever:</strong> the
+        hypothesis log. Form, predict, test, record. It's yours now</li>
+  </ul>
+</section>
+
+<section class="center">
+  <p class="kicker">The thesis, earned</p>
+  <h2 style="line-height:1.3">AI moved the bottleneck to<br>
+  <em>knowing what to ask</em> and<br>
+  <em>telling when the answer is wrong.</em></h2>
+  <p class="big good fragment" style="margin-top:1.2em">Both are fundamentals &mdash;<br>
+  and now you have them.</p>
+  <aside class="notes">
+    Land this warmly. They earned it. The failure mode of this session is sending them
+    out thinking "AI is bad." The correct exit state is "AI is powerful and I'm the one
+    who can wield it, because I can check it." Prize to the winning table; last word is
+    the debrief.
+  </aside>
+</section>
+
+</div></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/5.1.0/reveal.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/5.1.0/plugin/highlight/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/5.1.0/plugin/notes/notes.min.js"></script>
+<script>
+  Reveal.initialize({
+    hash:true, slideNumber:'c/t', transition:'fade', transitionSpeed:'fast',
+    width:1280, height:780, margin:0.07,
+    plugins:[ RevealHighlight, RevealNotes ]
+  });
+</script>
+</body>
+</html>

@@ -1,0 +1,344 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Lecture 9 — Working like a reverse engineer</title>
+
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/5.1.0/reveal.min.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/5.1.0/theme/black.min.css" id="theme">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/5.1.0/plugin/highlight/monokai.min.css">
+
+<style>
+  :root { --accent:#ffc857; --dim:#8b949e; --good:#7ee787; --bad:#ff7b72; }
+  .reveal { font-size: 30px; }
+  .reveal h1 { font-size:1.9em; text-transform:none; letter-spacing:-0.01em; }
+  .reveal h2 { font-size:1.35em; text-transform:none; letter-spacing:-0.01em; }
+  .reveal h3 { font-size:1.05em; text-transform:none; color:var(--accent); }
+  .reveal section { text-align:left; }
+  .reveal section.center { text-align:center; }
+  .reveal pre { width:100%; box-shadow:none; font-size:0.62em; }
+  .reveal pre code { padding:1em; border-radius:6px; max-height:620px; }
+  .reveal code:not(pre code){ background:#1c2128; color:var(--accent); padding:1px 7px; border-radius:4px; font-size:0.92em; }
+  .reveal table { font-size:0.72em; }
+  .reveal table th { color:var(--accent); border-bottom:2px solid #30363d; }
+  .reveal table td, .reveal table th { padding:0.35em 0.7em; }
+  .reveal em { color:var(--accent); font-style:italic; }
+  .reveal strong { color:#fff; }
+  .lead { font-size:1.15em; line-height:1.45; }
+  .dim { color:var(--dim); }
+  .good { color:var(--good); }
+  .bad { color:var(--bad); }
+  .big { font-size:1.5em; line-height:1.35; }
+  .kicker { color:var(--accent); font-size:0.6em; letter-spacing:0.16em; text-transform:uppercase; margin-bottom:0.6em; }
+  .rule { border-left:4px solid var(--accent); padding-left:0.9em; }
+  .terminal { background:#0d1117; border:1px solid #30363d; border-radius:6px; padding:0.8em 1em;
+              font-family:monospace; font-size:0.66em; line-height:1.55; white-space:pre; overflow-x:auto; }
+  .two { display:grid; grid-template-columns:1fr 1fr; gap:1.2em; align-items:start; }
+  .reveal ul { margin-left:0.4em; }
+  .reveal li { margin-bottom:0.4em; }
+  .footnote { font-size:0.6em; color:var(--dim); margin-top:1.2em; }
+  .reveal .slide-number { font-size:0.5em; }
+  .card { background:#161b22; border:1px solid #30363d; border-radius:8px; padding:0.8em 1em; font-size:0.82em; }
+</style>
+</head>
+<body>
+<div class="reveal"><div class="slides">
+
+<section class="center">
+  <p class="kicker">Reverse Engineering &middot; Lecture 9</p>
+  <h1>Working like a<br>reverse engineer</h1>
+  <p class="dim" style="margin-top:1.4em">Everything so far was equipment.<br>
+  This is the craft &mdash; and the most important lecture in the course.</p>
+  <aside class="notes">
+    Runs long by design. Protect the 45-minute AURA-7 end-to-end demo above everything.
+    The wrong turns ARE the content — an expert getting stuck and recovering is the most
+    valuable thing they see all course. Close the L1 OPEN QUESTIONS board physically.
+  </aside>
+</section>
+
+<section>
+  <h2>The skill is not reading code</h2>
+  <p>You can read instructions, follow control flow, recover types, drive a debugger,
+  read a binary's structure. <strong>None of that is yet reverse engineering.</strong></p>
+  <p class="fragment">The reason is scale. <code>aurad</code> has a few thousand
+  instructions. A browser has millions.</p>
+  <p class="lead fragment" style="margin-top:1.2em">You read maybe <strong>two
+  percent</strong>. The craft is choosing <em>which</em> two percent.</p>
+</section>
+
+<section class="center">
+  <h2>That choice depends on your <em>goal</em>.</h2>
+  <p class="lead fragment" style="margin-top:1.3em">"Where does it validate the
+  licence" and "does it send my data anywhere" and "why does it crash on this input"
+  point at completely different two percents of the same binary.</p>
+  <p class="big good fragment" style="margin-top:1em">No tool knows your goal.<br>
+  The triage is yours.</p>
+</section>
+
+<section>
+  <h2>Triage: five steps before any code</h2>
+  <pre><code class="language-text" data-trim>
+1. What is it?         file, readelf   — arch, linkage, stripped?
+2. What does it touch?  strace/ltrace   — files, network, environment
+3. What can it say?     strings         — errors, formats, banners, paths
+4. What does it call?   PLT list        — crypto? network? both?
+5. Where is my target?  xref a string / import → the code
+
+   THEN read code — only the part triage pointed you at.
+  </code></pre>
+  <p class="fragment lead">Amateurs open the disassembler at address zero and scroll.
+  Professionals spend five minutes on 1&ndash;5 and open it at the <em>one function
+  that matters</em>.</p>
+</section>
+
+<section>
+  <h2>Watch: a string to the target</h2>
+  <div class="terminal">strings aurad | grep -i "command"
+    "bad command"
+
+  → xref "bad command"    → the function that prints it
+                          → reached from the dispatcher
+                          → which validates before dispatching</div>
+  <p class="fragment lead" style="margin-top:1em">Under a minute, from a string, to the
+  exact function &mdash; in a binary you've never opened, reading nothing irrelevant.</p>
+  <p class="fragment footnote">The strings and imports are a map. Triage is reading the
+  map before setting out.</p>
+</section>
+
+<section>
+  <h2>The hypothesis loop</h2>
+  <pre><code class="language-text" data-trim>
+     ┌──────────▶  FORM a hypothesis  ──────────┐
+     │           "this loop is a checksum"        │
+     │                                            ▼
+  RECORD it                                  PREDICT what you'd
+  (confirmed /                               observe if true
+   killed /                                  "sum of input bytes"
+   still open)                                    │
+     ▲                                            ▼
+     └──────────────  TEST it  ◀──────────────────┘
+              (feed known input, read the value)
+  </code></pre>
+  <p class="fragment">The scientific method with a debugger attached.</p>
+</section>
+
+<section>
+  <h2>The two steps everyone gets wrong</h2>
+  <p><strong>PREDICT</strong> does the intellectual work.</p>
+  <p style="font-size:0.9em">"This is a checksum" is not testable. "This is a checksum,
+  so four zero bytes give zero and one one-byte gives one" is testable &mdash; and
+  confirms or kills the idea in seconds.</p>
+  <p class="fragment" style="margin-top:1.2em"><strong>RECORD</strong> is the one
+  everyone skips.</p>
+  <ul class="fragment" style="font-size:0.88em">
+    <li>You will not remember in two weeks, with no homework in between</li>
+    <li>A finding you can't reproduce is not a finding</li>
+    <li>A written-down dead end is a real result &mdash; it stops you (and the next
+        person) going there again</li>
+  </ul>
+  <p class="fragment dim">The notebook is not bureaucracy. It's what separates an
+  investigation from thrashing.</p>
+</section>
+
+<section>
+  <h2>Knowing when to switch</h2>
+  <div class="two">
+    <div class="card">
+      <p><strong>Read (static)</strong> until you hit a value you can't compute by
+      inspection &mdash; derived from input, read from a file, too tangled to follow.</p>
+      <p class="good">Then run it.</p>
+    </div>
+    <div class="card">
+      <p><strong>Run (dynamic)</strong> until you need a path this execution didn't
+      take, or you have a value and want to know where it came from.</p>
+      <p class="good">Then read it.</p>
+    </div>
+  </div>
+  <p class="fragment lead" style="margin-top:1em">The mistake in both directions is
+  <strong>stubbornness</strong> &mdash; computing an inlined transform in your head when
+  a breakpoint would hand it to you; single-stepping thousands of instructions when
+  reading shows the shape at a glance.</p>
+</section>
+
+<section>
+  <h2>Recognise algorithm shapes</h2>
+  <table>
+    <tr><th>Algorithm</th><th>The tell</th></tr>
+    <tr><td>AES</td><td>S-box: 256-byte table starting <code>63 7c 77 7b</code></td></tr>
+    <tr><td>SHA-256</td><td>init values <code>6a09e667 bb67ae85</code>; 64-round loop</td></tr>
+    <tr><td>MD5</td><td>constant <code>67452301</code></td></tr>
+    <tr><td>base64</td><td>the alphabet string; <code>&gt;&gt;6</code>, <code>&amp; 0x3f</code></td></tr>
+    <tr><td>CRC32</td><td>256-entry table; xor-and-shift per byte</td></tr>
+  </table>
+  <p class="fragment" style="margin-top:0.8em"><strong>Structural:</strong> a state
+  machine is a <code>switch</code> on a state var in a loop; a parser has an advancing
+  cursor and character-class checks; a protocol handler reads a length, then that many
+  bytes.</p>
+  <p class="lead fragment good">Recognise, then look up. You don't reconstruct AES
+  &mdash; you recognise its fingerprint and read the spec.</p>
+</section>
+
+<section>
+  <p class="kicker">Step-3 territory &mdash; recognise, never memorise</p>
+  <h2>The specialised zoo</h2>
+  <table>
+    <tr><th>You'll meet</th><th>Looks like</th><th>You do</th></tr>
+    <tr><td><strong>Packer</strong></td><td>tiny <code>.text</code>, huge high-entropy
+        <code>.data</code>, weird stub</td><td>unpack (<code>upx -d</code>) → analyse
+        the real thing</td></tr>
+    <tr class="fragment"><td><strong>Anti-debug</strong></td><td><code>ptrace(TRACEME)</code>,
+        timing, scanning self for <code>0xCC</code></td><td>patch the check → read up</td></tr>
+    <tr class="fragment"><td><strong>Custom VM</strong></td><td>fetch-decode-execute over
+        a bytecode array</td><td>recover the opcode table → ordinary RE</td></tr>
+    <tr class="fragment"><td><strong>Obfuscation</strong></td><td>opaque predicates,
+        encrypted strings</td><td>defeat dynamically → read up</td></tr>
+  </table>
+  <p class="fragment lead" style="margin-top:0.8em">Nobody carries these in their head.
+  Recognise the smell, know the name to search, look it up. <strong>That is the
+  professional move, not a failure to have memorised.</strong></p>
+</section>
+
+<section class="center">
+  <h2>This is exactly where an assistant earns its keep.</h2>
+  <p class="lead" style="margin-top:1.2em"><em>"I think this is a VM dispatch loop, help
+  me recover the opcode semantics."</em></p>
+  <p class="fragment">You supply the recognition and the judgement. It supplies the
+  grind.</p>
+  <p class="fragment dim">The partnership the whole course has been building toward:
+  you decide what's worth doing and whether the result is right; the machine does the
+  volume.</p>
+</section>
+
+<section class="center">
+  <p class="kicker">The single most important hour of the course</p>
+  <h2>Live: reversing AURA-7, end to end</h2>
+  <p class="lead" style="margin-top:1.2em">Licence algorithm and wire protocol, start to
+  finish, thinking aloud &mdash; <strong>every wrong turn kept in.</strong></p>
+  <p class="dim">Triage → the rolling hash (guess CRC32, check the constants, be wrong,
+  correct it) → write a keygen, prove it → the config checksum (close the Lecture 1
+  open question) → the wire protocol → craft a packet, get a valid response.</p>
+  <aside class="notes">
+    45 minutes, replaces the normal Teach B + Lab B split. Ham up the wrong turns — the
+    biggest student misconception is that experts don't get stuck. When you close the L1
+    OPEN QUESTION, physically walk to the old board and cross it off. Five months to
+    close that loop — let the room feel it.
+  </aside>
+</section>
+
+<section class="center">
+  <p class="kicker">Lab &mdash; 40 minutes + the demo</p>
+  <h2>The shape zoo, then finish AURA-7</h2>
+  <p class="lead" style="margin-top:1em"><strong>Core</strong> &mdash; identify the
+  algorithm in 8 functions by constants and structure. Name it, cite the tell.</p>
+  <p class="dim"><strong>Stretch</strong> &mdash; triage <code>aurad</code> cold; reach
+  the validator via xrefs; time yourself.<br>
+  <strong>Boss</strong> &mdash; identify and defeat the anti-debug; write the
+  recognise&rarr;look-up&rarr;apply chain.</p>
+  <p class="fragment lead"><strong>Then:</strong> a hypothesis log for one AURA-7
+  component &mdash; the trail, not just the answer.</p>
+</section>
+
+<section>
+  <h2>The deliverable is not "the answer"</h2>
+  <p>For a licence algorithm, "the key is validated by a rolling hash" is
+  <strong>not</strong> the deliverable.</p>
+  <p class="fragment">The deliverable is: the address of the transform, the exact
+  recurrence, the inputs you fed and outputs you saw, the hypotheses you killed, and
+  enough that a reader could write the keygen from your notes.</p>
+  <div class="rule fragment" style="margin-top:1.2em">
+    <p class="lead">A finding you can state but not support is a guess. A finding
+    documented with its evidence is knowledge. That difference is the entire value of
+    the work.</p>
+  </div>
+</section>
+
+<section>
+  <p class="kicker">On ground truth you built yourself, minutes ago</p>
+  <h2>Hand the model the decompilation</h2>
+  <p>Ask for the exact algorithm. It produces something fluent and <em>mostly</em>
+  right: "a CRC32 of the key", or a rolling hash with a plausible rotation.</p>
+  <p class="fragment">Genre correct. Structure correct. It recognised the shape &mdash;
+  the same recognition slide 8 is about.</p>
+  <p class="big bad fragment" style="margin-top:0.8em">The specific constant is wrong.</p>
+</section>
+
+<section>
+  <h2>The check is decisive &mdash; you already did the work</h2>
+  <div class="terminal">key "AAAA" through the model's claimed algorithm:   acc after 2 bytes = 0x1e2f
+key "AAAA" through the real binary:                acc after 2 bytes = 0x3b7c
+                                                                       ↑ diverged</div>
+  <p class="fragment" style="margin-top:1em">A plausible member of the "licence hash"
+  family &mdash; right family, wrong function &mdash; because it pattern-matched common
+  implementations instead of tracing <em>this</em> one.</p>
+  <aside class="notes">
+    Falsification Drill, highest stakes of the course — the class built the ground truth
+    themselves, live, minutes ago. Score the model's answer against the real recurrence
+    on the board.
+  </aside>
+</section>
+
+<section class="center">
+  <h2>The whole course in one observation</h2>
+  <p class="lead" style="margin-top:1em">The model got you <span class="good">ninety
+  percent</span> there in one second: it correctly said "rolling hash" &mdash; genuinely
+  useful, and faster than you.</p>
+  <p class="lead fragment">The last <span class="bad">ten percent</span> was a rotation
+  constant. It was wrong. It would have broken every key you generated.</p>
+  <p class="big fragment" style="margin-top:0.8em">You caught it in ten seconds &mdash;
+  because you had the real recurrence to compare against.</p>
+</section>
+
+<section class="center">
+  <div class="rule" style="text-align:left">
+    <p class="lead">You don't reject the tool. You don't trust it.</p>
+    <p class="lead">You use it for the ninety percent, and you <strong>are</strong> the
+    ten percent.</p>
+    <p class="lead">And the only thing that lets you be the ten percent is that you can
+    produce the ground truth the tool cannot.</p>
+  </div>
+</section>
+
+<section>
+  <h2>Summary</h2>
+  <ul style="font-size:0.78em">
+    <li>The skill is choosing which 2% to read. It depends on your goal, so it can't be
+        delegated</li>
+    <li>Triage in five steps before reading any code. Reach the target by xref'ing a
+        string or import</li>
+    <li>The loop: form, <strong>predict</strong>, test, <strong>record</strong>.
+        Predict does the work; record makes it reproducible</li>
+    <li>Switch static&harr;dynamic deliberately. The mistake is stubbornness</li>
+    <li>Recognise algorithm shapes by constants and structure. Recognise, then look up</li>
+    <li>The specialised zoo is recognise-and-look-up, never memorise &mdash; and where an
+        assistant is most useful</li>
+    <li>The deliverable is a documented, reproducible finding, not an answer</li>
+    <li>On ground truth you built: the tool gives right family, wrong constant. You
+        catch it only because you have the real recurrence</li>
+  </ul>
+</section>
+
+<section class="center">
+  <p class="kicker">Next time &mdash; the capstone</p>
+  <h2>Humans, machines,<br>and a target nobody has seen</h2>
+  <p class="dim" style="margin-top:1.4em">Three teams race a fresh binary: no AI, AI
+  only, human + AI. You get to prove the thesis on yourselves.</p>
+  <p class="footnote">Optional: <em>Practical Binary Analysis</em> ch. 5&ndash;6. A full
+  teardown of a difficulty-4 crackme &mdash; the hypothesis log matters more than the
+  solve.</p>
+</section>
+
+</div></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/5.1.0/reveal.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/5.1.0/plugin/highlight/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/5.1.0/plugin/notes/notes.min.js"></script>
+<script>
+  Reveal.initialize({
+    hash:true, slideNumber:'c/t', transition:'fade', transitionSpeed:'fast',
+    width:1280, height:780, margin:0.07,
+    plugins:[ RevealHighlight, RevealNotes ]
+  });
+</script>
+</body>
+</html>

@@ -1,0 +1,574 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Lecture 1 — Binaries, and why RE is inference</title>
+
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/5.1.0/reveal.min.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/5.1.0/theme/black.min.css" id="theme">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/5.1.0/plugin/highlight/monokai.min.css">
+
+<style>
+  :root {
+    --accent: #ffc857;
+    --dim: #8b949e;
+    --good: #7ee787;
+    --bad: #ff7b72;
+  }
+  .reveal { font-size: 30px; }
+  .reveal h1 { font-size: 1.9em; text-transform: none; letter-spacing: -0.01em; }
+  .reveal h2 { font-size: 1.35em; text-transform: none; letter-spacing: -0.01em; }
+  .reveal h3 { font-size: 1.05em; text-transform: none; color: var(--accent); }
+  .reveal section { text-align: left; }
+  .reveal section.center { text-align: center; }
+  .reveal pre { width: 100%; box-shadow: none; font-size: 0.62em; }
+  .reveal pre code { padding: 1em; border-radius: 6px; max-height: 620px; }
+  .reveal code:not(pre code) {
+    background: #1c2128; color: var(--accent);
+    padding: 1px 7px; border-radius: 4px; font-size: 0.92em;
+  }
+  .reveal table { font-size: 0.72em; }
+  .reveal table th { color: var(--accent); border-bottom: 2px solid #30363d; }
+  .reveal table td, .reveal table th { padding: 0.35em 0.7em; }
+  .reveal em { color: var(--accent); font-style: italic; }
+  .reveal strong { color: #fff; }
+  .lead { font-size: 1.15em; line-height: 1.45; }
+  .dim { color: var(--dim); }
+  .good { color: var(--good); }
+  .bad { color: var(--bad); }
+  .big { font-size: 1.5em; line-height: 1.35; }
+  .kicker {
+    color: var(--accent); font-size: 0.6em; letter-spacing: 0.16em;
+    text-transform: uppercase; margin-bottom: 0.6em;
+  }
+  .rule { border-left: 4px solid var(--accent); padding-left: 0.9em; }
+  .terminal {
+    background: #0d1117; border: 1px solid #30363d; border-radius: 6px;
+    padding: 0.8em 1em; font-family: monospace; font-size: 0.66em;
+    line-height: 1.55; white-space: pre; overflow-x: auto;
+  }
+  .two { display: grid; grid-template-columns: 1fr 1fr; gap: 1.2em; align-items: start; }
+  .reveal ul { margin-left: 0.4em; }
+  .reveal li { margin-bottom: 0.4em; }
+  .footnote { font-size: 0.6em; color: var(--dim); margin-top: 1.2em; }
+  .reveal .slide-number { font-size: 0.5em; }
+</style>
+</head>
+<body>
+<div class="reveal"><div class="slides">
+
+<!-- ============ TITLE ============ -->
+<section class="center">
+  <p class="kicker">Reverse Engineering &middot; Lecture 1</p>
+  <h1>Binaries, and why reverse<br>engineering is inference</h1>
+  <p class="dim" style="margin-top:1.4em">From source to bytes &mdash; and what gets destroyed on the way</p>
+  <aside class="notes">
+    Housekeeping: biweekly, three hours, nothing graded, laptops open, the room is
+    for working. Boundary: we reverse the binaries this course provides, not other
+    people's. Full legal treatment in Lecture 10.
+  </aside>
+</section>
+
+<!-- ============ THE FRAME ============ -->
+<section>
+  <h2>What reverse engineering is</h2>
+  <p class="lead">A compiler turns source into machine code.<br>
+  Reverse engineering goes the other way: from machine code to an
+  <em>understanding</em> of what a program does.</p>
+  <p class="lead fragment">Not to the source code. The source is usually
+  <strong>not recoverable</strong> &mdash; and not because it's hidden.</p>
+  <p class="lead fragment">Because it no longer exists anywhere in the file.</p>
+</section>
+
+<section>
+  <h2>Inference, not decryption</h2>
+  <div class="rule">
+    <p class="lead">Compilation is <strong>lossy</strong>. It discards information
+    permanently &mdash; like converting a photo to greyscale.</p>
+  </div>
+  <p class="fragment">You can guess what colour a grey pixel was. You are
+  <em>guessing</em>, and no cleverness turns a guess into a measurement.</p>
+  <p class="fragment">So RE is <strong>inference</strong>: reasoning from evidence
+  to the most plausible explanation, under uncertainty.</p>
+  <p class="fragment dim">Closer to reading an X-ray than decrypting a message.
+  An X-ray is <em>interpreted</em> &mdash; and the interpretation is only as good as
+  the reader's knowledge of anatomy.</p>
+  <aside class="notes">
+    The evidence is always complete. Every byte is there, nothing is hidden. What
+    varies is how much of it you can read. This course builds the anatomy knowledge.
+  </aside>
+</section>
+
+<!-- ============ PIPELINE ============ -->
+<section>
+  <h2>The compilation pipeline</h2>
+  <p>One command, <code>gcc hello.c -o hello</code>, is actually four steps.</p>
+  <pre><code class="language-text" data-trim>
+hello.c  ──cpp──▶  hello.i  ──cc1──▶  hello.s  ──as──▶  hello.o  ──ld──▶  hello
+
+source            preprocessed        assembly         object           executable
+                                                       (relocatable)     (linked)
+  </code></pre>
+  <p class="fragment">Every arrow runs <strong>one way</strong>.</p>
+</section>
+
+<section>
+  <h2>Run it yourself</h2>
+  <pre><code class="language-bash" data-trim data-line-numbers>
+gcc -E hello.c -o hello.i    # preprocess: 5 lines becomes ~800
+gcc -S hello.c -o hello.s    # compile:    now it's assembly
+gcc -c hello.s -o hello.o    # assemble:   now it's bytes
+gcc    hello.o -o hello      # link:       now it runs
+  </code></pre>
+  <p class="fragment">At each arrow, ask: <em>what did we just lose?</em></p>
+  <aside class="notes">
+    Do this live. Scroll hello.i so they see 800 lines of stdio.h. The reaction is
+    the point.
+  </aside>
+</section>
+
+<section>
+  <h2>What each stage destroys</h2>
+  <table>
+    <tr><th>Stage</th><th>Destroys</th></tr>
+    <tr><td><code>cpp</code></td><td>comments, macro <em>names</em>, include structure</td></tr>
+    <tr class="fragment"><td><code>cc1</code></td><td><strong>variable names, types, expression
+        structure, some function boundaries, control structure</strong></td></tr>
+    <tr class="fragment"><td><code>as</code></td><td>nothing of interest &mdash; asm and machine code
+        are two notations for the same thing</td></tr>
+    <tr class="fragment"><td><code>ld</code></td><td>source-file boundaries; symbol names <em>if stripped</em></td></tr>
+  </table>
+  <p class="fragment footnote">Why disassembly is reliable and decompilation is not:
+  the assembler threw nothing away, the compiler threw nearly everything away.</p>
+</section>
+
+<section>
+  <h2>The compiler's losses, concretely</h2>
+  <ul>
+    <li><strong>Names.</strong> <code>customer_balance</code> becomes <code>[rbp-0x18]</code></li>
+    <li class="fragment"><strong>Types.</strong> The machine has no <code>int</code>,
+        <code>float</code>, <code>char*</code>, <code>struct account</code> &mdash; only
+        registers, addresses, and widths</li>
+    <li class="fragment"><strong>Expression structure.</strong> <code>(a+b)*c</code> and
+        equivalent temporaries compile identically</li>
+    <li class="fragment"><strong>Function boundaries.</strong> Small functions get inlined
+        and cease to exist</li>
+    <li class="fragment"><strong>Control structure.</strong> <code>for</code>,
+        <code>while</code>, and <code>goto</code> loops can produce the same jumps</li>
+  </ul>
+  <p class="fragment dim">A type is a fiction the compiler maintained during
+  compilation, then discarded.</p>
+</section>
+
+<!-- ============ MANY TO ONE ============ -->
+<section>
+  <p class="kicker">The central idea</p>
+  <h2>Compilation is many-to-one</h2>
+  <div class="two">
+    <pre><code class="language-c" data-trim>
+int f(int n) {
+    int s = 0;
+    for (int i = 1; i &lt;= n; i++)
+        s += i;
+    return s;
+}
+    </code></pre>
+    <pre><code class="language-c" data-trim>
+int g(int n) {
+    return n * (n + 1) / 2;
+}
+    </code></pre>
+  </div>
+  <p class="fragment">At <code>-O0</code>: clearly different. One has a loop.</p>
+  <p class="fragment">At <code>-O2</code>: the compiler recognises the closed form.
+  These can compile to <strong>byte-identical machine code</strong>.</p>
+</section>
+
+<section class="center">
+  <h2>Given only that machine code &mdash;<br>was the source <code>f</code> or <code>g</code>?</h2>
+  <p class="lead fragment" style="margin-top:1.5em">There is no answer.</p>
+  <p class="fragment">Not "hard to find". Not "we need a better tool".</p>
+  <p class="big fragment bad" style="margin-top:1em">The information no longer exists.</p>
+  <p class="fragment dim">Two different inputs produced the same output.<br>
+  No function inverts a many-to-one mapping.</p>
+</section>
+
+<section>
+  <h2>Three consequences</h2>
+  <ol>
+    <li><strong>A perfect decompiler is impossible.</strong> Not impractical &mdash;
+        impossible, for information-theoretic reasons. Any tool claiming to recover
+        source produces <em>a plausible</em> source, not <em>the</em> source.</li>
+    <li class="fragment"><strong>The same limit applies to any tool at all</strong>,
+        including one that has read every program ever written. Better priors let you
+        guess better. They do not recreate destroyed information.</li>
+    <li class="fragment"><strong>So the goal is not to recover the source.</strong>
+        It's to build a model of the behaviour that is good enough for your purpose.</li>
+  </ol>
+  <p class="fragment lead" style="margin-top:0.8em">"Good enough for the purpose" is a
+  judgement call. <em>Judgement is the skill.</em></p>
+</section>
+
+<!-- ============ WHAT SURVIVES ============ -->
+<section>
+  <h2>What survives</h2>
+  <p>Compilation cannot destroy anything the machine <strong>needs in order to run</strong>.</p>
+  <table>
+    <tr><th>Survives</th><th>Why it helps</th></tr>
+    <tr><td>Control flow structure</td><td>Loops must still loop, branches still branch</td></tr>
+    <tr><td>String &amp; numeric literals</td><td>Must be in memory to be used</td></tr>
+    <tr><td>Library / system calls</td><td>Must be <em>named</em> for the linker to resolve</td></tr>
+    <tr><td>Data layout, offsets</td><td>The machine needs exact addresses</td></tr>
+    <tr><td>Syscalls</td><td>The kernel boundary is fixed and numbered</td></tr>
+    <tr><td>Algorithmic shape</td><td>AES still contains the AES constants</td></tr>
+  </table>
+</section>
+
+<section class="center">
+  <p class="kicker">The principle behind every technique in this course</p>
+  <h2 class="good">Look for what the compiler<br>had no choice about.</h2>
+  <aside class="notes">
+    Forward-reference lightly: argument registers reveal signatures (L4) because the
+    ABI isn't optional. Address scaling reveals element size (L5) because the machine
+    must compute the right address. Padding reveals struct layout (L5) because
+    hardware requires alignment.
+  </aside>
+</section>
+
+<!-- ============ IDENTIFYING FILES ============ -->
+<section>
+  <h2>Magic numbers</h2>
+  <p>Files announce their type with fixed bytes, almost always at offset 0.</p>
+  <table>
+    <tr><th>Bytes</th><th>Format</th></tr>
+    <tr><td><code>7f 45 4c 46</code></td><td>ELF &mdash; Linux executables, objects, shared libs</td></tr>
+    <tr><td><code>4d 5a</code></td><td>PE / MZ &mdash; Windows executables</td></tr>
+    <tr><td><code>89 50 4e 47</code></td><td>PNG</td></tr>
+    <tr><td><code>1f 8b</code></td><td>gzip</td></tr>
+    <tr><td><code>ca fe ba be</code></td><td>Java class / Mach-O fat binary</td></tr>
+  </table>
+  <p class="fragment"><code>7f 45 4c 46</code> is <code>0x7F</code> then ASCII
+  <code>E</code> <code>L</code> <code>F</code> &mdash; one non-printable byte so it's
+  never mistaken for text, then a human-readable tag.</p>
+</section>
+
+<section>
+  <h2><code>file</code> is a heuristic</h2>
+  <p><code>file</code> matches signatures against a rule database. It does not read
+  the filename, and it does not verify the whole file.</p>
+  <p class="fragment">Two failure modes you'll meet today:</p>
+  <ul>
+    <li class="fragment">A file with <strong>one damaged magic byte</strong> reports as
+        <code>data</code> &mdash; while remaining a perfectly well-formed PNG</li>
+    <li class="fragment">A file can be <strong>constructed</strong> to match a format
+        it isn't</li>
+  </ul>
+  <div class="rule fragment" style="margin-top:1.2em">
+    <p class="lead"><code>file</code> gives you a <strong>hypothesis</strong>.<br>
+    <code>xxd</code> gives you <strong>evidence</strong>. Confirm.</p>
+  </div>
+  <p class="fragment footnote">Three seconds. It will save you hours.</p>
+</section>
+
+<section>
+  <h2>The triage toolbox</h2>
+  <pre><code class="language-bash" data-trim data-line-numbers>
+file X            # what is it?  (a hypothesis — confirm it)
+xxd X | head      # the actual bytes: magic number, structure
+strings -n 8 X    # printable runs: errors, formats, paths, banners
+nm -C X           # symbol names, if not stripped
+readelf -h X      # header: architecture, type, entry point
+readelf -d X      # dynamic: which libraries it needs
+readelf -S X      # sections: .text, .rodata, .data, ...
+  </code></pre>
+  <p class="fragment">Run these <em>before</em> any disassembly. Every time.</p>
+</section>
+
+<!-- ============ STRINGS ============ -->
+<section>
+  <h2><code>strings</code>: the first technique</h2>
+  <div class="terminal">$ ./crackme01
+password: hunter2
+nope.</div>
+  <p class="fragment" style="margin-top:1em">The program must compare your input
+  against <em>something</em>. The simplest implementation stores that something as a
+  string literal &mdash; which lives in <code>.rodata</code>, where
+  <code>strings</code> reads it straight out.</p>
+  <p class="fragment">Crude. Frequently the most productive thirty seconds you will
+  spend on a binary.</p>
+  <aside class="notes">
+    Cold open lives here. Let them solve it — including with a model. Both are
+    supposed to happen. Then hand out crackme01x.
+  </aside>
+</section>
+
+<section>
+  <h2>&hellip; and its limit</h2>
+  <p>Same program. The expected password is now XOR-encoded and decoded at startup.</p>
+  <pre><code class="language-c" data-trim>
+static char secret[] = { 0x2a, 0x31, 0x2e, 0x2b, ... };  /* each byte ^ 0x5A */
+
+for (int i = 0; i &lt; len; i++)
+    secret[i] ^= 0x5A;
+  </code></pre>
+  <div class="terminal fragment">$ strings crackme01x | grep -i pass
+password:</div>
+  <p class="fragment"><span class="bad">The password is gone.</span> The bytes aren't
+  printable, so they aren't printed.</p>
+</section>
+
+<section>
+  <h2>Why that matters</h2>
+  <p>The obfuscation isn't clever. It's trivial.</p>
+  <p class="fragment">The point is that the technique which worked a moment ago told
+  you nothing about <em>why</em> it worked &mdash; so it gives you nothing to fall back
+  on when it stops.</p>
+  <p class="fragment">It also failed <strong>silently</strong>. An empty result looks
+  exactly like "there was nothing to find."</p>
+  <p class="fragment">And the program <em>still knows the password</em>. It must &mdash;
+  it compares your input successfully. The decoding loop is right there, doing the
+  work for you.</p>
+  <div class="rule fragment" style="margin-top:1em">
+    <p class="big good">The program always tells you.<br>
+    The only question is whether you can read it.</p>
+  </div>
+</section>
+
+<!-- ============ OPTIMISATION ============ -->
+<section>
+  <h2>Optimisation levels</h2>
+  <table>
+    <tr><th>Level</th><th>What you'll see</th></tr>
+    <tr><td><code>-O0</code></td><td>Every variable gets a stack slot; explicit load/store
+        for each access. Assembly maps closely to source. Friendly to read &mdash; and
+        not what real software ships as.</td></tr>
+    <tr class="fragment"><td><code>-O2</code></td><td>Production. Variables live in
+        registers, loads/stores vanish. Small functions inlined away. Loops unrolled,
+        rewritten, or replaced with closed-form arithmetic. Dead code removed.
+        Computations reordered.</td></tr>
+    <tr class="fragment"><td><code>-Os</code></td><td>Optimise for size: less inlining and
+        unrolling, shorter encodings preferred.</td></tr>
+  </table>
+  <p class="fragment">Same source, very different binaries. A technique that works on
+  <code>-O0</code> examples may not transfer to <code>-O2</code> code &mdash; which is
+  why we use both.</p>
+</section>
+
+<!-- ============ LAB A ============ -->
+<section class="center">
+  <p class="kicker">Lab A &mdash; 40 minutes</p>
+  <h2>Eight mystery files</h2>
+  <p class="lead" style="margin-top:1.2em"><strong>Core</strong> &mdash; identify all eight.
+  For each, write down <em>which single piece of evidence decided it</em>.</p>
+  <p class="lead">"<code>file</code> said so" is not an acceptable answer.</p>
+  <p class="dim fragment"><strong>Stretch</strong> &mdash; compile at <code>-O0</code>/<code>-O2</code>/<code>-Os</code>,
+  diff the asm, name what was destroyed at each level.<br>
+  <strong>Boss</strong> &mdash; two files are the same program, different builds. Find the
+  pair and prove it.</p>
+</section>
+
+<!-- ============ AURA-7 ============ -->
+<section>
+  <p class="kicker">Worked example &middot; first contact</p>
+  <h2>AURA-7</h2>
+  <p>A firmware image from a synthetic embedded device. We'll take it apart across
+  the whole course.</p>
+  <div class="terminal fragment">$ file aura-fw.bin
+aura-fw.bin: data</div>
+  <p class="fragment">Correct, and useless. No signature matched. Firmware images
+  generally have no standard format &mdash; the only software that reads them is the
+  bootloader that shipped with the device.</p>
+</section>
+
+<section>
+  <h2>What <code>strings</code> gives us</h2>
+  <div class="terminal">AURA-7 firmware v1.2
+(c) 2019 Aura Systems
+/dev/ttyS0
+AURA</div>
+  <p class="fragment" style="margin-top:1em">Four pieces of text, one hypothesis:
+  <em>an embedded device that talks over a serial port and has a version number.</em></p>
+  <p class="fragment">Now look at the bytes directly.</p>
+</section>
+
+<section>
+  <h2>The header</h2>
+  <div class="terminal">$ xxd aura-fw.bin | head -1
+00000000: 4155 5241 0100 0200 0020 0000 ....   AURA.... ...</div>
+  <p class="fragment" style="margin-top:1em"><code>41 55 52 41</code> = <code>AURA</code>
+  in ASCII. A magic number &mdash; just not one <code>file</code> knows about.</p>
+  <p class="fragment">The device's own bootloader checks those four bytes to confirm
+  it's been handed a valid image. Exactly as the kernel checks
+  <code>7f 45 4c 46</code>.</p>
+  <aside class="notes">
+    Decode the four bytes by hand at the board. It should look easy, because it is.
+    First time they see bytes-to-meaning done manually.
+  </aside>
+</section>
+
+<section>
+  <h2>Endianness</h2>
+  <p>The bytes at offset 4 are <code>01 00 02 00</code>. What version is that?</p>
+  <p class="fragment">x86 is <strong>little-endian</strong>: multi-byte integers are
+  stored least-significant byte first.</p>
+  <p class="fragment">So the u16 at offset 4 isn't <code>0x0100</code> &mdash; it's
+  <code>0x0001</code>. And at offset 6, 2. <span class="good">Version 1.2.</span></p>
+  <p class="fragment">Read them the wrong way and you get <span class="bad">version
+  256.512</span>, which is absurd.</p>
+  <p class="fragment dim">Strings are unaffected &mdash; an array of single bytes has no
+  byte order to get wrong. That's why text reads left-to-right in a hex dump while
+  numbers look reversed.</p>
+</section>
+
+<section class="center">
+  <h2 class="good">An implausible result is a gift.</h2>
+  <p class="lead fragment" style="margin-top:1.2em">It tells you immediately that you
+  made an error. Enormous numbers, negative lengths, timestamps in the year 30,000
+  &mdash; check byte order first.</p>
+  <p class="lead fragment"><strong>The errors that cost you a day are the plausible
+  ones.</strong></p>
+  <p class="fragment dim">Those you catch by checking against something independent,
+  not by noticing they look odd.</p>
+</section>
+
+<section>
+  <h2>An open question</h2>
+  <p>There's a length field at offset 8. Compared to the actual file size, it
+  doesn't match &mdash; the file is larger than the length claims.</p>
+  <p class="fragment">Possible: the length excludes the header. The data is
+  compressed. There's a checksum or signature appended after the payload.</p>
+  <p class="fragment">We don't have enough information to decide. The correct action
+  is to <strong>write the question down and continue</strong>.</p>
+  <div class="rule fragment" style="margin-top:1em">
+    <p>An unresolved question that has been <em>recorded</em> is a normal state of
+    work. One that's been silently forgotten is how you end up with a wrong model of
+    the program.</p>
+  </div>
+  <p class="fragment footnote">This one stays open until Lecture 9.</p>
+  <aside class="notes">
+    Write it on the standing OPEN QUESTIONS board. It stays up all course and gets
+    crossed off in L9. Five months to close the loop.
+  </aside>
+</section>
+
+<!-- ============ LAB B ============ -->
+<section class="center">
+  <p class="kicker">Lab B &mdash; 30 minutes</p>
+  <h2>AURA-7 triage</h2>
+  <p class="lead" style="margin-top:1.2em">Run the same method on <code>auractl</code>
+  and <code>aurad</code>. One-page triage note each: what kind of file, linkage,
+  stripped or not, what libraries, what the strings suggest.</p>
+  <p class="lead">Plus &mdash; required &mdash; <strong>three open questions</strong>.</p>
+  <p class="dim fragment">"How does it work?" is not a question. "What produces the
+  16-byte value printed on a failed licence check?" is.</p>
+</section>
+
+<!-- ============ THE AI SECTION ============ -->
+<section>
+  <p class="kicker">The obvious objection</p>
+  <h2>A machine can already do most of this</h2>
+  <p>It will solve a <code>strings</code> crackme instantly, read assembly faster
+  than you, and produce a fluent explanation of any function.</p>
+  <p class="lead fragment" style="margin-top:1em">So why learn it?</p>
+</section>
+
+<section>
+  <h2>The answer is slide 8</h2>
+  <p>Compilation destroys information, so recovering intent is <strong>inference</strong>,
+  not lookup.</p>
+  <p class="fragment">A tool that produces the <em>most likely</em> explanation is
+  genuinely useful &mdash; and it is wrong specifically where the program departs from
+  what is likely.</p>
+  <p class="fragment">Obfuscated code, unusual constructs, deliberate misdirection,
+  custom algorithms: all, <strong>by construction</strong>, unlikely.</p>
+  <p class="fragment dim">That's not a defect being patched. It's the shape of the
+  problem.</p>
+</section>
+
+<section>
+  <h2>The failure has a particular shape</h2>
+  <div class="rule">
+    <p class="lead">Wrong output does not arrive labelled as wrong. It arrives with
+    the same fluency and confidence as correct output.</p>
+  </div>
+  <p class="fragment" style="margin-top:1em">Show a model only the <code>strings</code>
+  output of a stripped binary and it will frequently narrate a detailed account of
+  the program's behaviour, built from a handful of format strings.</p>
+  <p class="fragment">Coherent. Specific. Plausible. Substantially invented.</p>
+  <aside class="notes">
+    This is the session's Falsification Drill. Take a student's actual model output
+    and run it: state the claim, name what would falsify it, make the observation,
+    record the verdict on the scoreboard.
+  </aside>
+</section>
+
+<section>
+  <h2>The standard, for the rest of the course</h2>
+  <p>For any claim about a binary:</p>
+  <p class="big good fragment" style="margin:1em 0">What observation would show<br>this
+  to be false?</p>
+  <p class="fragment">Then make that observation.</p>
+  <ul class="fragment">
+    <li>A claim about a string &rarr; check the bytes</li>
+    <li>A claim about a comparison &rarr; check the disassembly</li>
+    <li>A claim about behaviour &rarr; check in a debugger</li>
+  </ul>
+</section>
+
+<section>
+  <h2>This is not a special procedure for machines</h2>
+  <p>It's the ordinary discipline of the field, and it applies identically to
+  <strong>your own</strong> hypotheses &mdash; which will also be confident, and also
+  sometimes wrong.</p>
+  <p class="lead fragment" style="margin-top:1.2em">The tool has not changed what the
+  work is.</p>
+  <p class="lead fragment">It has made the ability to <em>verify</em> the scarce part.</p>
+</section>
+
+<!-- ============ SUMMARY ============ -->
+<section>
+  <h2>Summary</h2>
+  <ul style="font-size:0.85em">
+    <li>RE is inference from evidence, not recovery of source</li>
+    <li>Compilation is one-way and many-to-one &mdash; distinguishing information is
+        genuinely gone</li>
+    <li>What survives is what the machine needs to run. <em>That's your leverage</em></li>
+    <li><code>file</code> is a hypothesis; <code>xxd</code> is evidence</li>
+    <li><code>strings</code> is the best first move and strands you when it fails,
+        because it never told you why it worked</li>
+    <li>x86 is little-endian. Implausible values usually mean byte order</li>
+    <li>Record open questions rather than forgetting them</li>
+    <li>Any claim &mdash; yours or a machine's &mdash; is checked by naming the observation
+        that would falsify it</li>
+  </ul>
+</section>
+
+<section class="center">
+  <p class="kicker">Next time</p>
+  <h2>The machine:<br>registers, memory, instructions</h2>
+  <p class="dim" style="margin-top:1.4em">A CPU is a state machine. Nothing more
+  mysterious is happening, ever.</p>
+  <p class="footnote">Take reference card #2 (x86-64) with you. Optional reading:
+  CS:APP ch. 1.</p>
+</section>
+
+</div></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/5.1.0/reveal.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/5.1.0/plugin/highlight/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/5.1.0/plugin/notes/notes.min.js"></script>
+<script>
+  Reveal.initialize({
+    hash: true,
+    slideNumber: 'c/t',
+    transition: 'fade',
+    transitionSpeed: 'fast',
+    width: 1280,
+    height: 780,
+    margin: 0.07,
+    plugins: [ RevealHighlight, RevealNotes ]
+  });
+</script>
+</body>
+</html>
