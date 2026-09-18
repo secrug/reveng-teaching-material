@@ -1,0 +1,37 @@
+name: "Wire Format"
+author: "AURA-7 course team"
+category: rev
+description: |
+  The AURA-7 config loader checks each byte of your input against a table of
+  "steps" baked into the firmware. Get the table right and the wire format
+  validates — the accepted input is the flag.
+  Download: {file}
+attribution: "Original challenge — AURA-7 course suite"
+value: 150
+type: dynamic
+extra: { initial: 150, decay: 35, minimum: 75 }
+version: "0.1"
+image: null
+protocol: null
+host: null
+state: hidden
+solution: solution/WRITEUP.md
+healthcheck: healthcheck.sh
+attempts: 0
+logic: any
+flags:
+  - type: static
+    content: "AURA{p4dding_is_where_the_model_slips}"
+    data: case_sensitive
+topics: [struct-alignment, padding, rodata-table-parsing]
+tags: [rev]
+files:
+  - dist/padded-struct
+hints:
+  - content: "How big is one entry of that step table, really? Count the bytes between two entries in .rodata, don't count the fields in the struct."
+    cost: 20
+  - content: "sizeof(struct{uint8_t; uint32_t;}) is 8, not 5. The u32 is 4-byte aligned; there are 3 padding bytes you can't see in the source."
+    cost: 40
+next: null
+scheduled_at: null
+module: null

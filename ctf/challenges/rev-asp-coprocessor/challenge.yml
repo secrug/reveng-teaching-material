@@ -1,0 +1,39 @@
+name: "The Coprocessor"
+author: "AURA-7 course team"
+category: rev
+description: |
+  The AURA-7 board offloads its unlock check to a tiny coprocessor with a very
+  strange instruction set. We dumped its ROM and the checker it runs. Work out
+  what the coprocessor does, then find the input it accepts — that's the flag.
+  Download: {file}
+attribution: "Original challenge — AURA-7 course suite (no public writeup exists)"
+value: 450
+type: dynamic
+extra: { initial: 450, decay: 20, minimum: 150 }
+version: "0.1"
+image: null
+protocol: null
+host: null
+state: hidden
+solution: solution/WRITEUP.md
+healthcheck: healthcheck.sh
+attempts: 0
+logic: any
+flags:
+  - type: static
+    content: "AURA{a_transport_triggered_l00p_w1th_branches}"
+    data: case_sensitive
+topics: [transport-triggered-architecture, custom-isa, control-flow-recovery, dynamic-analysis]
+tags: [rev]
+files:
+  - dist/asp-coprocessor
+hints:
+  - content: "There are only three opcodes and none of them do arithmetic. So where does the arithmetic happen? Look at what a write to a high port does."
+    cost: 40
+  - content: "Some ports aren't storage or math — writing to them changes the program counter. That's how this machine branches. Find the loop and the exit condition."
+    cost: 70
+  - content: "Per byte: xor K1 -> rotate by (index & 7) -> add a term that grows by K4 each step -> xor K3. All reversible. The constants are in the MOVI immediates."
+    cost: 100
+next: null
+scheduled_at: null
+module: null

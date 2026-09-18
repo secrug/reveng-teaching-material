@@ -1,0 +1,60 @@
+name: "Signal Lock"
+author: "AURA-7 course team"
+category: rev
+description: |
+  We pulled the unlock verifier off an AURA-7 control board. It won't accept
+  anything we throw at it. Feed it the right signal and it unlocks — whatever
+  you fed it is the flag.
+
+  The chip is small. It is also not the chip you think it is.
+
+  `./signal-lock` reads one line from stdin.
+attribution: "Original challenge — AURA-7 course suite (no public writeup exists)"
+
+value: 250
+type: dynamic
+extra:
+  initial: 250
+  decay: 25
+  minimum: 100
+version: "0.1"
+
+# Static reversing: a downloadable binary, no live service.
+image: null
+protocol: null
+host: null
+state: hidden
+
+solution: solution/WRITEUP.md      # uploaded to CTFd as a hidden solution
+healthcheck: healthcheck.sh
+attempts: 0                        # unlimited
+logic: any
+
+# Per-instance: set by make/gen at deploy time. The flag IS the accepted input.
+flags:
+  - type: static
+    content: "AURA{tta_s1gnal_l0ck}"
+    data: case_sensitive
+
+topics:                            # admin-only: the real techniques
+  - transport-triggered-architecture
+  - custom-isa-recovery
+  - dynamic-analysis
+  - per-byte-invertible-transform
+tags:                              # public
+  - rev
+
+files:
+  - dist/signal-lock               # ONLY the built, stripped binary ships
+
+hints:
+  - content: "It's a computer. It just isn't the kind of computer you're expecting. There are no add/xor/rol instructions — look again at what the only instruction actually does."
+    cost: 25
+  - content: "Watch writes to the high ports (0xA0-0xC2). Writing an operand is what triggers the arithmetic. The machine computes by moving data, not by 'doing math' instructions."
+    cost: 50
+  - content: "Each input byte goes through xor -> rotate-left -> add -> xor, and every step is reversible. The rotate amount and the add constant change with position. Invert it."
+    cost: 75
+
+next: null
+scheduled_at: null
+module: null

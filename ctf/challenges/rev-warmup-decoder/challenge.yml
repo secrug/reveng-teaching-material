@@ -1,0 +1,35 @@
+name: "Signal Primer"
+author: "AURA-7 course team"
+category: rev
+description: |
+  Warm up on the AURA-7 signal path. This little verifier scrambles what you
+  type and checks it against a stored pattern. Feed it the right line and it
+  accepts — that line is the flag.
+  Download: {file}
+attribution: "Original challenge — AURA-7 course suite"
+value: 100
+type: dynamic
+extra: { initial: 100, decay: 40, minimum: 50 }
+version: "0.1"
+image: null
+protocol: null
+host: null
+state: hidden
+solution: solution/WRITEUP.md
+healthcheck: healthcheck.sh
+attempts: 0
+logic: any
+flags:
+  - type: static
+    content: "AURA{w4rmup_the_machine_is_good_at_this}"
+    data: case_sensitive
+topics: [rotate-xor, keystream-in-rodata, calibration]
+tags: [rev]
+files:
+  - dist/warmup-decoder
+hints:
+  - content: "Run `strings`. The key is right there."
+    cost: 5
+next: null
+scheduled_at: null
+module: null

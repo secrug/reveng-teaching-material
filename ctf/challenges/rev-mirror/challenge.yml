@@ -1,0 +1,37 @@
+name: "Hall of Mirrors"
+author: "AURA-7 course team"
+category: rev
+description: |
+  What you read is not what runs. This AURA-7 verifier keeps its key out of
+  sight until the moment it needs it. The tables in the binary look like noise.
+  Make it accept your input; that input is the flag.
+  Download: {file}
+attribution: "Original challenge — AURA-7 course suite"
+value: 300
+type: dynamic
+extra: { initial: 300, decay: 30, minimum: 120 }
+version: "0.1"
+image: null
+protocol: null
+host: null
+state: hidden
+solution: solution/WRITEUP.md
+healthcheck: healthcheck.sh
+attempts: 0
+logic: any
+flags:
+  - type: static
+    content: "AURA{wh4t_you_read_is_not_what_runs}"
+    data: case_sensitive
+topics: [runtime-key-derivation, custom-lcg, static-vs-dynamic]
+tags: [rev]
+files:
+  - dist/mirror
+hints:
+  - content: "The arrays in .rodata aren't the key. Something generates a keystream at startup and XORs it in. Find the loop that makes it."
+    cost: 30
+  - content: "Don't out-think the PRNG — outrun it. Break right after the keystream byte is computed and dump it for a run of any input, then invert."
+    cost: 60
+next: null
+scheduled_at: null
+module: null
