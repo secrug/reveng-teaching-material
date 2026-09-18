@@ -1,0 +1,14 @@
+services:
+  aurad:
+    build: .
+    image: aura7/blind-protocol:latest
+    restart: unless-stopped
+    ports:
+      - "9007:9007"
+    environment:
+      # per-instance: override at deploy and mirror into challenge.yml
+      AURA_FLAG: "AURA{bl1nd_pr0tocol_n0_b1nary_needed}"
+    read_only: true
+    security_opt: [ "no-new-privileges:true" ]
+    mem_limit: 128m
+    pids_limit: 64

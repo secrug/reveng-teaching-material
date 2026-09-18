@@ -1,0 +1,47 @@
+name: "Cold Call"
+author: "AURA-7 course team"
+category: misc
+description: |
+  There's an AURA-7 telemetry daemon still answering on the plant network. We
+  have no firmware for it and no documentation — just a packet capture a
+  technician took before the vendor went quiet.
+
+  Work out how to talk to it, then get it to tell you something it shouldn't.
+
+  Download: {file}
+  Connect: {connection_info}
+attribution: "Original challenge — AURA-7 course suite"
+value: 300
+type: dynamic
+extra: { initial: 300, decay: 25, minimum: 120 }
+version: "0.1"
+
+# --- service-backed challenge: first one in the suite to need hosting ---
+image: Dockerfile
+protocol: tcp
+host: null                       # set to registry:// or ssh:// target at deploy
+connection_info: "nc <HOST> 9007"
+state: hidden
+
+solution: solution/WRITEUP.md
+healthcheck: healthcheck.sh
+attempts: 0
+logic: any
+flags:
+  - type: static
+    content: "AURA{bl1nd_pr0tocol_n0_b1nary_needed}"
+    data: case_sensitive
+topics: [protocol-reverse-engineering, pcap-analysis, endianness-trap, id-enumeration, black-box]
+tags: [misc, network]
+files:
+  - dist/aura-capture.pcap
+hints:
+  - content: "Every message is: one type byte, a 2-byte big-endian length, then exactly that many payload bytes. Requests are 0x0N, responses 0x8N."
+    cost: 30
+  - content: "You can't replay the captured token — the 4 bytes in the 0x81 response change every connection. Derive the token from them instead. The capture has TWO sessions; work out why your constant doesn't match across both."
+    cost: 60
+  - content: "Lengths are big-endian but the nonce is little-endian, and the token goes back big-endian. Cross the byte orders. After that, the item id is one byte wide — and LIST is not a complete inventory."
+    cost: 100
+next: null
+scheduled_at: null
+module: null

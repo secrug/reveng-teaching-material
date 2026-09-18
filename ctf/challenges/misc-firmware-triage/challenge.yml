@@ -1,0 +1,39 @@
+name: "Teardown"
+author: "AURA-7 course team"
+category: misc
+description: |
+  We pulled the firmware image off an AURA-7 control board. Engineering swears
+  there's a build token in there somewhere, but the one we found doesn't work.
+
+  Take the image apart properly.
+
+  Download: {file}
+attribution: "Original challenge — AURA-7 course suite"
+value: 200
+type: dynamic
+extra: { initial: 200, decay: 35, minimum: 90 }
+version: "0.1"
+image: null
+protocol: null
+host: null
+state: hidden
+solution: solution/WRITEUP.md
+healthcheck: healthcheck.sh
+attempts: 0
+logic: any
+flags:
+  - type: static
+    content: "AURA{f1rmware_l4youts_d0nt_lie}"
+    data: case_sensitive
+topics: [file-format-parsing, section-tables, decoy-flag, offset-arithmetic]
+tags: [misc, forensics]
+files:
+  - dist/aura-fw.bin
+hints:
+  - content: "The first flag-shaped thing you find is not the flag. Account for every byte in the file: the size and the length field in the header disagree for a reason."
+    cost: 20
+  - content: "filesize = header + section table + payload + trailer. Once the table parses cleanly, read the loader banner again — it tells you what keys the payload."
+    cost: 45
+next: null
+scheduled_at: null
+module: null
