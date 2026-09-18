@@ -1,0 +1,41 @@
+name: "Brick Wall"
+author: "AURA-7 course team"
+category: crypto
+description: |
+  The hardened AURA-7 bootloader gate. We already tried pointing the usual
+  automated tooling at it and watched it run until we gave up.
+
+  Try being smarter than it instead. The accepted input is the flag.
+
+  `./one-way-gate` reads one line from stdin.
+attribution: "Original challenge — AURA-7 course suite"
+value: 400
+type: dynamic
+extra: { initial: 400, decay: 20, minimum: 150 }
+version: "0.1"
+image: null
+protocol: null
+host: null
+state: hidden
+solution: solution/WRITEUP.md
+healthcheck: healthcheck.sh
+attempts: 0
+logic: any
+flags:
+  - type: static
+    content: "AURA{symb0lic_execution_hits_a_wall}"
+    data: case_sensitive
+topics: [anti-symbolic-execution, opaque-predicates, path-explosion, chunked-preimage]
+tags: [crypto, rev]
+files:
+  - dist/one-way-gate
+hints:
+  - content: "If your solver has been running for ten minutes, stop it. The multiplication chain is not something a constraint solver will invert, and the second loop branches on every byte on purpose."
+    cost: 40
+  - content: "How many bytes of your input actually enter each comparison? And what carries over from the previous one?"
+    cost: 80
+  - content: "Two bytes per step, chained. That's a 16-bit search per chunk, left to right — about a million operations total. The checksum at the end takes care of itself."
+    cost: 120
+next: null
+scheduled_at: null
+module: null

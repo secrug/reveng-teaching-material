@@ -1,0 +1,42 @@
+name: "Counterfeit"
+author: "AURA-7 course team"
+category: crypto
+description: |
+  Every AURA-7 unit ships locked until it sees a valid licence. We have the
+  validator but not a single working licence — and the vendor is not returning
+  our calls.
+
+  Make one. The validator prints the flag when it accepts.
+
+  `./aura-license` reads a 16-hex-character licence from stdin.
+attribution: "Original challenge — AURA-7 course suite (original cipher, no public writeup exists)"
+value: 300
+type: dynamic
+extra: { initial: 300, decay: 25, minimum: 120 }
+version: "0.1"
+image: null
+protocol: null
+host: null
+state: hidden
+solution: solution/WRITEUP.md
+healthcheck: healthcheck.sh
+attempts: 0
+logic: any
+flags:
+  - type: static
+    content: "AURA{bf3933ce0f32d3df}"
+    data: case_sensitive
+topics: [custom-block-cipher, feistel, keygen, sbox-extraction, key-schedule-recovery]
+tags: [crypto, rev]
+files:
+  - dist/aura-license
+hints:
+  - content: "Brute force is off the table (2^64). The validator DEcrypts your licence and compares to something — so work backwards: what plaintext must it produce, and can you encrypt that yourself?"
+    cost: 30
+  - content: "It's a 16-round Feistel network, so encryption is the same loop with the round keys reversed. You need three things exactly right: the S-box, the round function, and the key schedule."
+    cost: 60
+  - content: "It is NOT TEA. There is no delta constant, and the round keys are not the master key split into words — they come from a 64-bit LCG. Transcribe, don't assume."
+    cost: 90
+next: null
+scheduled_at: null
+module: null
