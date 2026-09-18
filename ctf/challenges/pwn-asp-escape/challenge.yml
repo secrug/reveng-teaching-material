@@ -1,0 +1,44 @@
+name: "Breakout"
+author: "AURA-7 course team"
+category: pwn
+description: |
+  You've met the AURA-7 coprocessor before. This time it runs your programs in a
+  sandbox: registers and 64 bytes of memory, nothing else. Supposedly.
+
+  Escape it. Upload a program that makes the coprocessor do something it was
+  never allowed to.
+
+  Download: {file}
+  Connect: {connection_info}
+attribution: "Original challenge — AURA-7 course suite (custom VM; no public writeup exists)"
+value: 550
+type: dynamic
+extra: { initial: 550, decay: 20, minimum: 180 }
+version: "0.1"
+image: Dockerfile
+protocol: tcp
+host: null
+connection_info: "nc <HOST> 9010"
+state: hidden
+solution: solution/WRITEUP.md
+healthcheck: healthcheck.sh
+attempts: 0
+logic: any
+flags:
+  - type: static
+    content: "AURA{REPLACE_AT_DEPLOY}"
+    data: case_sensitive
+topics: [vm-escape, oob-write, custom-isa, function-pointer-hijack, rev-plus-pwn]
+tags: [pwn, rev]
+files:
+  - dist/asp-escape
+requirements:
+  - "The Coprocessor"            # understanding the ASP ISA first is strongly advised
+hints:
+  - content: "First recover the five-opcode ISA. Then look hard at the memory index in LD/ST: how big can it be, and how big is the memory array?"
+    cost: 50
+  - content: "The mem index is a full byte (0-255) but mem is 64 bytes, and a function pointer (trap) sits right after it in the struct — mem[64] IS trap. Write &win across mem[64..71] with eight ST ops, then TRAP."
+    cost: 100
+next: null
+scheduled_at: null
+module: null

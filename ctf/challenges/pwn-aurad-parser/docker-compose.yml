@@ -1,0 +1,10 @@
+services:
+  aurad-parser:
+    build: .
+    image: aura7/aurad-parser:latest
+    restart: unless-stopped
+    ports: [ "9010:9010" ]
+    mem_limit: 128m
+    pids_limit: 128
+    security_opt: [ "no-new-privileges:true" ]
+    # TODO(prod): wrap the service in nsjail per-connection — see ../HOSTING.md

@@ -1,0 +1,39 @@
+name: "Ring Zero"
+author: "AURA-7 course team"
+category: pwn
+description: |
+  The AURA-7 telemetry manager lets you create, delete, annotate and display
+  channels. It's careful about indices. It is not careful about lifetimes.
+
+  Download: {file}
+  Connect: {connection_info}
+attribution: "Original challenge — AURA-7 course suite"
+value: 400
+type: dynamic
+extra: { initial: 400, decay: 20, minimum: 150 }
+version: "0.1"
+image: Dockerfile
+protocol: tcp
+host: null
+connection_info: "nc <HOST> 9010"
+state: hidden
+solution: solution/WRITEUP.md
+healthcheck: healthcheck.sh
+attempts: 0
+logic: any
+flags:
+  - type: static
+    content: "AURA{REPLACE_AT_DEPLOY}"
+    data: case_sensitive
+topics: [use-after-free, tcache-reuse, function-pointer-hijack, heap]
+tags: [pwn]
+files:
+  - dist/telemetry-heap
+hints:
+  - content: "What happens to the pointer in the table when you 'delete' a channel? And what size does 'note' allocate?"
+    cost: 40
+  - content: "del leaves the pointer dangling; note is a same-size malloc you fully control. tcache hands note the freed channel chunk, and its first 8 bytes are the fmt pointer. Point it at win, then show."
+    cost: 80
+next: null
+scheduled_at: null
+module: null

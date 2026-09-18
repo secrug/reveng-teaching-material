@@ -1,0 +1,42 @@
+name: "Overrun"
+author: "AURA-7 course team"
+category: pwn
+description: |
+  The AURA-7 command front-end validates the length of every command before it
+  reads it. Their words. We're not so sure.
+
+  Binary attached; the live service is the same build. Get it to run its
+  maintenance routine.
+
+  Download: {file}
+  Connect: {connection_info}
+attribution: "Original challenge — AURA-7 course suite"
+value: 250
+type: dynamic
+extra: { initial: 250, decay: 30, minimum: 100 }
+version: "0.1"
+image: Dockerfile
+protocol: tcp
+host: null                       # set at deploy
+connection_info: "nc <HOST> 9010"
+state: hidden
+solution: solution/WRITEUP.md
+healthcheck: healthcheck.sh      # runs on a Linux build host (needs pwntools)
+attempts: 0
+logic: any
+flags:
+  - type: static
+    content: "AURA{REPLACE_AT_DEPLOY}"   # per-instance: flag.txt on the server
+    data: case_sensitive
+topics: [stack-overflow, signed-unsigned, ret2win, stack-alignment]
+tags: [pwn]
+files:
+  - dist/aurad-parser
+hints:
+  - content: "There IS a length check. Read it very carefully — what type is the length, and what does the read call take?"
+    cost: 30
+  - content: "A negative length passes 'len > 64' and becomes a huge size_t at fread(). Overflow the 64-byte buffer and return into unlock(). If it segfaults inside unlock, you need a ret gadget for 16-byte alignment."
+    cost: 60
+next: null
+scheduled_at: null
+module: null
